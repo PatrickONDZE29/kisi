@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KISI — Hors ligne</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #00572D;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      text-align: center;
+      padding: 24px;
+    }
+    .card {
+      background: white;
+      color: #00572D;
+      border-radius: 24px;
+      padding: 40px 32px;
+      max-width: 360px;
+      width: 100%;
+    }
+    .emoji { font-size: 64px; margin-bottom: 16px; }
+    h1 { font-size: 24px; font-weight: bold; margin: 0 0 12px; }
+    p { color: #555; font-size: 14px; line-height: 1.6; margin: 0 0 24px; }
+    button {
+      background: #00572D;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="emoji">📡</div>
+    <h1>Pas de connexion</h1>
+    <p>Vérifiez votre connexion internet et réessayez. KISI a besoin d'internet pour afficher les pharmacies et médicaments.</p>
+    <button onclick="window.location.reload()">Réessayer</button>
+  </div>
+</body>
+</html>

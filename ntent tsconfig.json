@@ -1,0 +1,67 @@
+[33m91aa16d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m fix supabase build crash
+ public/sw.js                        | 24 [31m-------------------[m
+ src/app/layout.tsx                  | 21 [32m+[m[31m---------------[m
+ src/components/ClientLayout.tsx     | 39 [32m+++++++++++++++++++++++++++[m[31m---[m
+ src/components/InstallButton.tsx    | 42 [31m--------------------------------[m
+ src/components/InstallPWAButton.tsx | 48 [32m+++++++++++++++++++++++++++++++++++++[m
+ 5 files changed, 85 insertions(+), 89 deletions(-)
+[33mb41ed62[m fix supabase build crash
+ tsconfig.json | 2 [32m+[m[31m-[m
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+[33m441d8b2[m fix supabase build crash
+ tsconfig.json | 2 [32m+[m[31m-[m
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+[33m4618fcc[m fix supabase build crash
+ src/components/SplashScreen.tsx | 26 [32m+++++++++++++++++++++++[m[31m---[m
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+[33m22dff57[m mise à jour du site
+ src/components/InstallButton.tsx | 20 [32m++++++++++[m[31m----------[m
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+[33mfa47194[m fix supabase build crash
+ next.config.js                                     |   14 [32m+[m[31m-[m
+ package-lock.json                                  | 3958 [32m++[m[31m------------------[m
+ package.json                                       |    5 [32m+[m[31m-[m
+ public/sw.js                                       |  118 [32m+[m[31m-[m
+ src/app/layout.tsx                                 |   21 [32m+[m[31m-[m
+ src/components/ClientLayout.tsx                    |   39 [32m+[m[31m-[m
+ .../{InstallPWAButton.tsx => InstallButton.tsx}    |    0
+ src/components/PWARegister.tsx                     |   13 [32m+[m
+ src/components/SplashScreen.tsx                    |   34 [32m+[m[31m-[m
+ 9 files changed, 347 insertions(+), 3855 deletions(-)
+[33m0bea796[m fix supabase build crash
+ next.config.js                      |  12 [32m+[m[31m--[m
+ package-lock.json                   | 142 [32m++++++++++++++++++[m[31m------------------[m
+ src/app/layout.tsx                  |  16 [32m+[m[31m---[m
+ src/components/ClientLayout.tsx     |  16 [32m+++[m[31m-[m
+ src/components/InstallPWAButton.tsx |   2 [32m+[m[31m-[m
+ src/components/SplashScreen.tsx     |  26 [32m+[m[31m------[m
+ 6 files changed, 96 insertions(+), 118 deletions(-)
+[33m6020b8e[m fix supabase build crash
+ next.config.js                      | 18 [32m++++++[m[31m------------[m
+ package-lock.json                   |  6 [32m+++[m[31m---[m
+ src/app/layout.tsx                  | 16 [32m++++++++++++++[m[31m--[m
+ src/components/ClientLayout.tsx     | 16 [32m+++[m[31m-------------[m
+ src/components/InstallPWAButton.tsx | 22 [32m++++++++[m[31m--------------[m
+ 5 files changed, 34 insertions(+), 44 deletions(-)
+[33m719ef11[m fix supabase build crash
+ next.config.js                      |   14 [32m+[m[31m-[m
+ package-lock.json                   | 1004 [32m++++++++++++[m[31m-----------------------[m
+ package.json                        |   10 [32m+[m[31m-[m
+ src/app/layout.tsx                  |   26 [32m+[m[31m-[m
+ src/components/ClientLayout.tsx     |   41 [32m+[m[31m-[m
+ src/components/InstallPWAButton.tsx |   48 [32m++[m
+ src/components/SplashScreen.tsx     |   27 [32m+[m[31m-[m
+ 7 files changed, 444 insertions(+), 726 deletions(-)
+[33m8ee1f24[m fix supabase build crash
+ next.config.js                  |   21 [32m+[m
+ next.config.ts                  |    5 [32m+[m[31m-[m
+ package-lock.json               | 4614 [32m+++++++++++++++++++++++++++++++++++[m[31m----[m
+ package.json                    |    8 [32m+[m[31m-[m
+ public/icon-192.png             |  Bin [31m0[m -> [32m8068[m bytes
+ public/icon-512.png             |  Bin [31m0[m -> [32m43704[m bytes
+ public/manifest.json            |   21 [32m+[m
+ public/sw.js                    |  100 [32m+[m
+ public/workbox-e43f5367.js      | 2455 [32m+++++++++++++++++++++[m
+ src/app/layout.tsx              |   15 [32m+[m[31m-[m
+ src/components/SplashScreen.tsx |   50 [32m+[m
+ 11 files changed, 6871 insertions(+), 418 deletions(-)
