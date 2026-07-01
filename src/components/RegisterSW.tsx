@@ -12,14 +12,40 @@ export default function RegisterSW() {
       return;
     }
 
-    // Enregistrement uniquement en production (évite conflits dev/Turbopack)
+    let refreshing = false;
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
     navigator.serviceWorker
-      .register("/sw.js")
+      .register("/sw.js", {
+        scope: "/",
+        updateViaCache: "none",
+      })
       .then((registration) => {
-        console.log("Service Worker enregistré :", registration.scope);
+        console.log("✅ SW enregistré :", registration.scope);
+
+        // 🔥 vérifie les updates automatiquement
+        registration.onupdatefound = () => {
+          const newWorker = registration.installing;
+
+          if (!newWorker) return;
+
+          newWorker.onstatechange = () => {
+            if (
+              newWorker.state === "installed" &&
+              navigator.serviceWorker.controller
+            ) {
+              console.log("🔄 Nouvelle version disponible");
+            }
+          };
+        };
       })
       .catch((err) => {
-        console.error("Échec enregistrement Service Worker :", err);
+        console.error("❌ SW error :", err);
       });
   }, []);
 

@@ -1,8 +1,5 @@
-// public/sw.js — Service Worker KISI
+const CACHE_NAME = "kisi-v3";
 
-const CACHE_NAME = "kisi-v2";
-
-// Fichiers à mettre en cache au premier chargement
 const STATIC_ASSETS = [
   "/",
   "/offline.html",
@@ -10,40 +7,45 @@ const STATIC_ASSETS = [
   "/icon-512.png",
 ];
 
-// INSTALLATION
+// 🔥 INSTALL
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      // Mise en cache individuelle pour éviter qu'un seul fichier manquant bloque tout
       await Promise.all(
         STATIC_ASSETS.map((url) =>
           cache.add(url).catch((err) => {
-            console.warn("SW: échec mise en cache de", url, err);
+            console.warn("SW cache fail:", url, err);
           })
         )
       );
     })
   );
+
+  // force activation immédiate
   self.skipWaiting();
 });
 
-// ACTIVATION
+// 🔥 ACTIVATE
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(
-        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+        keys
+          .filter((key) => key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
       )
     )
   );
+
   self.clients.claim();
 });
 
-// FETCH — Network First robuste pour HTML, Cache First pour assets
+// 🔥 FETCH STRATEGY
 self.addEventListener("fetch", (event) => {
-  const { request } = event;
+  const request = event.request;
   const url = new URL(request.url);
 
+  // Ignore API + Supabase
   if (
     request.method !== "GET" ||
     url.hostname.includes("supabase") ||
@@ -52,47 +54,66 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // PAGES HTML — Network First avec vérification du statut
-  if (request.mode === "navigate" || request.headers.get("accept")?.includes("text/html")) {
+  const isHTML =
+    request.mode === "navigate" ||
+    request.headers.get("accept")?.includes("text/html");
+
+  // =========================
+  // 🌐 HTML: Network First
+  // =========================
+  if (isHTML) {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // ⚠️ Vérifie que la réponse est valide AVANT de la mettre en cache
           if (!response || response.status !== 200) {
-            throw new Error("Réponse réseau invalide");
+            throw new Error("Invalid response");
           }
+
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, clone);
+          });
+
           return response;
         })
         .catch(async () => {
           const cached = await caches.match(request);
           if (cached) return cached;
+
           const offline = await caches.match("/offline.html");
           if (offline) return offline;
-          // Dernier recours absolu pour ne jamais rester bloqué
-          return new Response("KISI est hors ligne.", {
+
+          return new Response("KISI offline", {
             status: 200,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+            headers: { "Content-Type": "text/html" },
           });
         })
     );
+
     return;
   }
 
-  // ASSETS STATIQUES — Cache First avec fallback réseau sûr
+  // =========================
+  // 📦 ASSETS: Cache First
+  // =========================
   event.respondWith(
-    caches.match(request).then(
-      (cached) =>
-        cached ||
-        fetch(request)
-          .then((response) => {
-            if (!response || response.status !== 200) return response;
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-            return response;
-          })
-          .catch(() => cached)
-    )
+    caches.match(request).then((cached) => {
+      if (cached) return cached;
+
+      return fetch(request)
+        .then((response) => {
+          if (!response || response.status !== 200) return response;
+
+          const clone = response.clone();
+
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, clone);
+          });
+
+          return response;
+        })
+        .catch(() => cached);
+    })
   );
 });
