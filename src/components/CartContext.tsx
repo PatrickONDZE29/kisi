@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, ReactNode, useCallback } from "react";
+import CartModal from "@/components/CartModal";
 
 export interface CartItem {
   id: string;
@@ -16,54 +17,58 @@ interface CartContextType {
   items: CartItem[];
   addItem: (item: CartItem) => void;
   removeItem: (id: string) => void;
-  clearCart: () => void; // ✅ IMPORTANT ICI
+  clearCart: () => void;
   isInCart: (id: string) => boolean;
   count: number;
+  openCart: () => void;
+  closeCart: () => void;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
+  const [showCart, setShowCart] = useState(false);
 
-  function addItem(item: CartItem) {
-    setItems((prev) => [...prev, item]);
-  }
+  const addItem = useCallback((item: CartItem) => {
+    setItems((prev) => {
+      if (prev.find((i) => i.id === item.id)) return prev;
+      return [...prev, item];
+    });
+    // Ouvre le panier automatiquement dès qu'on ajoute un article
+    setShowCart(true);
+  }, []);
 
-  function removeItem(id: string) {
+  const removeItem = useCallback((id: string) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
-  }
+  }, []);
 
-  function clearCart() {
-    setItems([]); // ✅ vide le panier
-  }
+  const clearCart = useCallback(() => {
+    setItems([]);
+  }, []);
 
-  function isInCart(id: string) {
+  const isInCart = useCallback((id: string) => {
     return items.some((i) => i.id === id);
-  }
+  }, [items]);
 
-  const count = items.length;
+  const openCart = useCallback(() => setShowCart(true), []);
+  const closeCart = useCallback(() => setShowCart(false), []);
 
   return (
-    <CartContext.Provider
-      value={{
-        items,
-        addItem,
-        removeItem,
-        clearCart, // ✅ IMPORTANT
-        isInCart,
-        count,
-      }}
-    >
+    <CartContext.Provider value={{
+      items, addItem, removeItem, clearCart,
+      isInCart, count: items.length,
+      openCart, closeCart,
+    }}>
       {children}
+      {/* CartModal global — disponible sur toutes les pages */}
+      {showCart && <CartModal onClose={closeCart} />}
     </CartContext.Provider>
   );
 }
 
 export function useCart() {
   const context = useContext(CartContext);
-  if (!context) {
-    throw new Error("useCart must be used within CartProvider");
-  }
+  if (!context) throw new Error("useCart must be used within CartProvider");
   return context;
 }

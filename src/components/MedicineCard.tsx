@@ -21,7 +21,7 @@ interface MedicineCardProps {
     };
   };
   onReserve?: (item: any) => void;
-  showPharmacy?: boolean; // afficher le nom de la pharmacie ou non
+  showPharmacy?: boolean;
 }
 
 export default function MedicineCard({
@@ -29,7 +29,7 @@ export default function MedicineCard({
   onReserve,
   showPharmacy = false,
 }: MedicineCardProps) {
-  const { addItem, removeItem, isInCart } = useCart();
+  const { addItem, removeItem, isInCart, openCart } = useCart();
   const inCart = isInCart(item.id);
   const outOfStock = (item.quantity ?? 0) <= 0;
 
@@ -47,31 +47,36 @@ export default function MedicineCard({
       price: item.price,
       quantity_available: item.quantity,
     });
+    // addItem déclenche déjà l'ouverture du panier dans CartContext
+    // mais on appelle openCart explicitement au cas où l'item était déjà dans le panier
+  }
+
+  function handleCartClick() {
+    if (inCart) {
+      // Si déjà dans le panier, ouvre le panier directement
+      openCart();
+    } else {
+      // Sinon ajoute et le CartContext ouvre le panier automatiquement
+      handleCart();
+    }
   }
 
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-md overflow-hidden transition-colors border border-gray-100 dark:border-gray-800 hover:-translate-y-1 hover:shadow-xl transition-all duration-200">
+    <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-md overflow-hidden transition-all duration-200 border border-gray-100 dark:border-gray-800 hover:-translate-y-1 hover:shadow-xl">
 
-      {/* IMAGE médicament si disponible */}
+      {/* IMAGE */}
       {item.medicines?.image_url && (
-        <img
-          src={item.medicines.image_url}
-          alt={item.medicines?.name}
-          className="w-full h-36 object-cover"
-        />
+        <img src={item.medicines.image_url} alt={item.medicines?.name} className="w-full h-36 object-cover" />
       )}
 
       <div className="p-4">
 
-        {/* PHARMACIE (optionnel) */}
+        {/* PHARMACIE */}
         {showPharmacy && item.pharmacies?.name && (
           <div className="flex items-center gap-2 mb-3">
             {item.pharmacies?.logo_url && (
-              <img
-                src={item.pharmacies.logo_url}
-                alt={item.pharmacies.name}
-                className="w-7 h-7 rounded-full object-cover border border-gray-200 dark:border-gray-700"
-              />
+              <img src={item.pharmacies.logo_url} alt={item.pharmacies.name}
+                className="w-7 h-7 rounded-full object-cover border border-gray-200 dark:border-gray-700" />
             )}
             <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
               🏥 {item.pharmacies.name}
@@ -105,17 +110,17 @@ export default function MedicineCard({
         </div>
 
         {/* ACTIONS */}
-        {!outOfStock && (
+        {!outOfStock ? (
           <div className="flex gap-2 mt-4">
             <button
-              onClick={handleCart}
+              onClick={handleCartClick}
               className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 border-2 ${
                 inCart
                   ? "bg-[#00572D] text-white border-[#00572D]"
                   : "bg-white dark:bg-gray-800 text-[#00572D] dark:text-green-400 border-[#00572D] dark:border-green-500"
               }`}
             >
-              {inCart ? "✅ Dans le panier" : "🛒 Panier"}
+              {inCart ? "✅ Voir le panier" : "🛒 Ajouter au panier"}
             </button>
 
             {onReserve && (
@@ -127,9 +132,7 @@ export default function MedicineCard({
               </button>
             )}
           </div>
-        )}
-
-        {outOfStock && (
+        ) : (
           <div className="mt-4 w-full bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 py-2.5 rounded-xl font-bold text-sm text-center">
             Indisponible
           </div>
