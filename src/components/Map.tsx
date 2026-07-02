@@ -8,18 +8,13 @@ import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 interface Pharmacy {
+  [key: string]: any;
   id: string;
-  name?: string;
-  city?: string;
-  phone?: string;
-  opening_hours?: string;
-  logo_url?: string;
-  is_open?: boolean;
-  latitude?: number | string;
-  longitude?: number | string;
 }
 
+// ✅ medicines est un TABLEAU (retour Supabase)
 interface StockItem {
+  [key: string]: any;
   id: string;
   quantity: number;
   price: number;
@@ -29,7 +24,7 @@ interface StockItem {
     name?: string;
     description?: string;
     image_url?: string;
-  };
+  }[];
 }
 
 function PopupMedicineCard({
@@ -45,6 +40,9 @@ function PopupMedicineCard({
   const inCart = isInCart(item.id);
   const outOfStock = (item.quantity ?? 0) <= 0;
 
+  // ✅ Prend le premier élément du tableau medicines
+  const med = item.medicines?.[0];
+
   function handleCartClick() {
     if (inCart) {
       openCart();
@@ -54,7 +52,7 @@ function PopupMedicineCard({
     addItem({
       id: item.id,
       medicine_id: item.medicine_id,
-      medicine_name: item.medicines?.name || "",
+      medicine_name: med?.name || "",
       pharmacy_id: pharmacy.id,
       pharmacy_name: pharmacy.name || "",
       price: item.price,
@@ -67,10 +65,10 @@ function PopupMedicineCard({
       {/* Image ronde */}
       <div className="absolute -top-7 left-1/2 -translate-x-1/2">
         <div className="w-14 h-14 rounded-full border-4 border-white shadow-md overflow-hidden bg-gray-100">
-          {item.medicines?.image_url ? (
+          {med?.image_url ? (
             <img
-              src={item.medicines.image_url}
-              alt={item.medicines?.name || "Médicament"}
+              src={med.image_url}
+              alt={med?.name || "Médicament"}
               className="w-full h-full object-cover"
             />
           ) : (
@@ -83,12 +81,12 @@ function PopupMedicineCard({
 
       {/* Nom */}
       <h4 className="text-center font-bold text-[#00572D] text-[13px] leading-tight break-words">
-        {item.medicines?.name || "Médicament"}
+        {med?.name || "Médicament"}
       </h4>
 
       {/* Description */}
       <p className="text-center text-gray-500 text-[11px] mt-1 leading-snug break-words line-clamp-2">
-        {item.medicines?.description || "Aucune description disponible"}
+        {med?.description || "Aucune description disponible"}
       </p>
 
       {/* Stock + prix */}
@@ -139,7 +137,7 @@ function PopupMedicineCard({
 }
 
 export default function Map() {
-  const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
+  const [pharmacies, setPharmacies] = useState<any[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
   const [selectedPharmacyId, setSelectedPharmacyId] = useState<string | null>(null);
   const [loadingStock, setLoadingStock] = useState(false);
