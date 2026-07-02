@@ -3,12 +3,144 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/ToastProviderTemp";
+import { useCart } from "@/components/CartContext";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
+interface Pharmacy {
+  id: string;
+  name?: string;
+  city?: string;
+  phone?: string;
+  opening_hours?: string;
+  logo_url?: string;
+  is_open?: boolean;
+  latitude?: number | string;
+  longitude?: number | string;
+}
+
+interface StockItem {
+  id: string;
+  quantity: number;
+  price: number;
+  medicine_id: string;
+  pharmacy_id?: string;
+  medicines?: {
+    name?: string;
+    description?: string;
+    image_url?: string;
+  };
+}
+
+function PopupMedicineCard({
+  item,
+  pharmacy,
+  onReserve,
+}: {
+  item: StockItem;
+  pharmacy: Pharmacy;
+  onReserve: (medicineId: string, pharmacyId: string) => void;
+}) {
+  const { addItem, isInCart, openCart } = useCart();
+  const inCart = isInCart(item.id);
+  const outOfStock = (item.quantity ?? 0) <= 0;
+
+  function handleCartClick() {
+    if (inCart) {
+      openCart();
+      return;
+    }
+
+    addItem({
+      id: item.id,
+      medicine_id: item.medicine_id,
+      medicine_name: item.medicines?.name || "",
+      pharmacy_id: pharmacy.id,
+      pharmacy_name: pharmacy.name || "",
+      price: item.price,
+      quantity_available: item.quantity,
+    });
+  }
+
+  return (
+    <div className="relative rounded-2xl border border-gray-200 bg-white p-3 pt-9 shadow-sm">
+      {/* Image ronde */}
+      <div className="absolute -top-7 left-1/2 -translate-x-1/2">
+        <div className="w-14 h-14 rounded-full border-4 border-white shadow-md overflow-hidden bg-gray-100">
+          {item.medicines?.image_url ? (
+            <img
+              src={item.medicines.image_url}
+              alt={item.medicines?.name || "Médicament"}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-xl">
+              💊
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Nom */}
+      <h4 className="text-center font-bold text-[#00572D] text-[13px] leading-tight break-words">
+        {item.medicines?.name || "Médicament"}
+      </h4>
+
+      {/* Description */}
+      <p className="text-center text-gray-500 text-[11px] mt-1 leading-snug break-words line-clamp-2">
+        {item.medicines?.description || "Aucune description disponible"}
+      </p>
+
+      {/* Stock + prix */}
+      <div className="flex items-center justify-between gap-2 mt-3">
+        <span
+          className={`text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${
+            outOfStock
+              ? "bg-red-100 text-red-600"
+              : "bg-green-100 text-green-700"
+          }`}
+        >
+          📦 {outOfStock ? "Rupture" : `${item.quantity} stock`}
+        </span>
+
+        <span className="font-bold text-[#00572D] text-[12px] whitespace-nowrap">
+          {(item.price ?? 0).toLocaleString()} FCFA
+        </span>
+      </div>
+
+      {/* Actions */}
+      {!outOfStock ? (
+        <div className="grid grid-cols-1 gap-2 mt-3">
+          <button
+            onClick={handleCartClick}
+            className={`w-full py-2 rounded-xl font-bold text-[11px] border transition ${
+              inCart
+                ? "bg-[#00572D] text-white border-[#00572D]"
+                : "bg-white text-[#00572D] border-[#00572D]"
+            }`}
+          >
+            {inCart ? "✅ Voir le panier" : "🛒 Ajouter au panier"}
+          </button>
+
+          <button
+            onClick={() => onReserve(item.medicine_id, pharmacy.id)}
+            className="w-full bg-[#00572D] text-white py-2 rounded-xl font-bold text-[11px]"
+          >
+            Réserver
+          </button>
+        </div>
+      ) : (
+        <div className="mt-3 w-full bg-gray-100 text-gray-400 py-2 rounded-xl font-bold text-[11px] text-center">
+          Indisponible
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Map() {
-  const [pharmacies, setPharmacies] = useState<any[]>([]);
-  const [stock, setStock] = useState<any[]>([]);
+  const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
+  const [stock, setStock] = useState<StockItem[]>([]);
   const [selectedPharmacyId, setSelectedPharmacyId] = useState<string | null>(null);
   const [loadingStock, setLoadingStock] = useState(false);
   const [leafletReady, setLeafletReady] = useState(false);
@@ -16,42 +148,83 @@ export default function Map() {
 
   useEffect(() => {
     const L = require("leaflet");
+
     delete (L.Icon.Default.prototype as any)._getIconUrl;
     L.Icon.Default.mergeOptions({
       iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
       iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
       shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
     });
+
     setLeafletReady(true);
     loadPharmacies();
   }, []);
 
   async function loadPharmacies() {
     const { data, error } = await supabase.from("pharmacies").select("*");
-    if (error) { console.error("Erreur Supabase:", error.message); return; }
+    if (error) {
+      console.error("Erreur Supabase:", error.message);
+      return;
+    }
     setPharmacies(data || []);
   }
 
   async function openPharmacy(pharmacyId: string) {
+    if (selectedPharmacyId === pharmacyId) {
+      setSelectedPharmacyId(null);
+      setStock([]);
+      return;
+    }
+
     setSelectedPharmacyId(pharmacyId);
     setLoadingStock(true);
+
     const { data, error } = await supabase
       .from("stock")
-      .select(`id, quantity, price, medicine_id, medicines(name, description)`)
+      .select(`
+        id,
+        quantity,
+        price,
+        medicine_id,
+        pharmacy_id,
+        medicines(name, description, image_url)
+      `)
       .eq("pharmacy_id", pharmacyId);
-    if (error) { setLoadingStock(false); return; }
+
+    if (error) {
+      setLoadingStock(false);
+      showToast("Erreur lors du chargement des médicaments", "error");
+      return;
+    }
+
     setStock(data || []);
     setLoadingStock(false);
   }
 
   async function reserve(medicineId: string, pharmacyId: string) {
     const { data: auth } = await supabase.auth.getUser();
-    if (!auth.user) { showToast("Veuillez vous connecter", "error"); return; }
 
-    const { data: userData } = await supabase.from("users").select("role").eq("id", auth.user.id).single();
-    if (!userData || userData.role !== "user") { showToast("Seuls les utilisateurs peuvent réserver", "error"); return; }
+    if (!auth.user) {
+      showToast("Veuillez vous connecter", "error");
+      return;
+    }
 
-    const { data: profile } = await supabase.from("profiles").select("full_name, phone").eq("id", auth.user.id).single();
+    const { data: userData } = await supabase
+      .from("users")
+      .select("role")
+      .eq("id", auth.user.id)
+      .single();
+
+    if (!userData || userData.role !== "user") {
+      showToast("Seuls les utilisateurs peuvent réserver", "error");
+      return;
+    }
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name, phone")
+      .eq("id", auth.user.id)
+      .single();
 
     const { error } = await supabase.from("reservations").insert({
       user_id: auth.user.id,
@@ -62,109 +235,151 @@ export default function Map() {
       status: "pending",
     });
 
-    if (error) { showToast(error.message, "error"); return; }
+    if (error) {
+      showToast(error.message, "error");
+      return;
+    }
+
     showToast("Réservation envoyée !");
+    openPharmacy(pharmacyId);
     openPharmacy(pharmacyId);
   }
 
-  if (!leafletReady) return (
-    <div className="rounded-3xl overflow-hidden shadow-xl border-4 border-[#00572D] flex items-center justify-center bg-gray-100 dark:bg-gray-900" style={{ height: "80vh", width: "100%" }}>
-      <p className="text-[#00572D] dark:text-green-400 font-bold">Chargement de la carte...</p>
-    </div>
-  );
+  if (!leafletReady) {
+    return (
+      <div
+        className="rounded-3xl overflow-hidden shadow-xl border-4 border-[#00572D] flex items-center justify-center bg-gray-100 dark:bg-gray-900"
+        style={{ height: "80vh", width: "100%" }}
+      >
+        <p className="text-[#00572D] dark:text-green-400 font-bold">
+          Chargement de la carte...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>
       <style>{`
-        .leaflet-popup-content-wrapper { border-radius: 14px !important; box-shadow: 0 4px 24px rgba(0,0,0,0.15) !important; padding: 0 !important; }
-        .leaflet-popup-content { margin: 0 !important; width: auto !important; max-width: min(80vw, 260px) !important; }
+        .leaflet-popup-content-wrapper {
+          border-radius: 18px !important;
+          box-shadow: 0 8px 30px rgba(0,0,0,0.18) !important;
+          padding: 0 !important;
+          overflow: hidden !important;
+        }
+
+        .leaflet-popup-content {
+          margin: 0 !important;
+          width: auto !important;
+          min-width: min(78vw, 280px) !important;
+          max-width: min(88vw, 320px) !important;
+        }
+
+        .leaflet-popup-close-button {
+          top: 8px !important;
+          right: 8px !important;
+          z-index: 10 !important;
+        }
       `}</style>
 
-      <div className="rounded-3xl overflow-hidden shadow-xl border-4 border-[#00572D]" style={{ height: "80vh", width: "100%" }}>
-        <MapContainer center={[-1.2, 15.5]} zoom={6} scrollWheelZoom={true} style={{ height: "100%", width: "100%" }}>
-          <TileLayer attribution="© OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <div
+        className="rounded-3xl overflow-hidden shadow-xl border-4 border-[#00572D]"
+        style={{ height: "80vh", width: "100%" }}
+      >
+        <MapContainer
+          center={[-1.2, 15.5]}
+          zoom={6}
+          scrollWheelZoom={true}
+          style={{ height: "100%", width: "100%" }}
+        >
+          <TileLayer
+            attribution="© OpenStreetMap"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
 
           {pharmacies
             .filter((p) => p.latitude != null && p.longitude != null)
             .map((p) => (
-              <Marker key={p.id} position={[Number(p.latitude), Number(p.longitude)]}>
+              <Marker
+                key={p.id}
+                position={[Number(p.latitude), Number(p.longitude)]}
+              >
                 <Popup>
-                  <div style={{ padding: "10px", fontFamily: "Arial, sans-serif" }}>
+                  <div className="w-[min(82vw,300px)] p-3">
+                    {/* Entête pharmacie */}
+                    <div className="text-center">
+                      <img
+                        src={p.logo_url || "/pharmacie.png"}
+                        alt={p.name || "Pharmacie"}
+                        className="w-14 h-14 object-cover rounded-full border-2 border-[#00572D] mx-auto"
+                      />
 
-                    {/* LOGO + NOM */}
-                    <div style={{ textAlign: "center", marginBottom: "8px" }}>
-                      <img src={p.logo_url || "/pharmacie.png"} alt={p.name}
-                        style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "50%", border: "2px solid #00572D", margin: "0 auto", display: "block" }} />
-                      <strong style={{ color: "#00572D", fontSize: "12px", display: "block", marginTop: "5px" }}>
+                      <strong className="text-[#00572D] text-sm block mt-2 break-words leading-tight">
                         🏥 {p.name}
                       </strong>
+
+                      <div className="text-[11px] text-gray-600 mt-2 space-y-1 leading-snug">
+                        {p.city && <p>📍 {p.city}</p>}
+                        {p.phone && <p>📞 {p.phone}</p>}
+                        {p.opening_hours && <p>🕒 {p.opening_hours}</p>}
+                        <p className={`font-bold ${p.is_open ? "text-green-700" : "text-red-600"}`}>
+                          {p.is_open ? "🟢 Ouverte" : "🔴 Fermée"}
+                        </p>
+                      </div>
                     </div>
 
-                    {/* INFOS */}
-                    <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.6" }}>
-                      {p.city && <p style={{ margin: "1px 0" }}>📍 {p.city}</p>}
-                      {p.phone && <p style={{ margin: "1px 0" }}>📞 {p.phone}</p>}
-                      {p.opening_hours && <p style={{ margin: "1px 0" }}>🕒 {p.opening_hours}</p>}
-                      <p style={{ margin: "3px 0", fontWeight: "bold", color: p.is_open ? "#00572D" : "#dc2626" }}>
-                        {p.is_open ? "🟢 Ouverte" : "🔴 Fermée"}
-                      </p>
+                    {/* Boutons pharmacie */}
+                    <div className="mt-3 grid grid-cols-1 gap-2">
+                      <button
+                        onClick={() => openPharmacy(p.id)}
+                        className="w-full bg-[#00572D] text-white py-2.5 rounded-xl font-bold text-[11px]"
+                      >
+                        {selectedPharmacyId === p.id
+                          ? "📦 Masquer les médicaments"
+                          : "💊 Voir les médicaments"}
+                      </button>
+
+                      <a
+                        href={`/pharmacy/${p.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-center bg-white text-[#00572D] border border-[#00572D] py-2.5 rounded-xl font-bold text-[11px]"
+                      >
+                        Voir la pharmacie →
+                      </a>
                     </div>
 
-                    {/* BOUTONS */}
-                    <button onClick={() => openPharmacy(p.id)}
-                      style={{ width: "100%", background: "#00572D", color: "white", padding: "6px", borderRadius: "8px", border: "none", marginTop: "6px", cursor: "pointer", fontWeight: "bold", fontSize: "10px" }}>
-                      💊 Voir les médicaments
-                    </button>
-
-                    <a href={`/pharmacy/${p.id}`} target="_blank"
-                      style={{ display: "block", textAlign: "center", marginTop: "5px", background: "#fff", color: "#00572D", border: "1.5px solid #00572D", padding: "6px", borderRadius: "8px", textDecoration: "none", fontWeight: "bold", fontSize: "10px" }}>
-                      Voir la pharmacie →
-                    </a>
-
-                    {/* MÉDICAMENTS dans le popup */}
+                    {/* Liste médicaments */}
                     {selectedPharmacyId === p.id && (
-                      <div style={{ marginTop: "8px" }}>
-                        <hr style={{ margin: "6px 0", borderColor: "#e5e7eb" }} />
-                        <strong style={{ color: "#00572D", fontSize: "10px" }}>💊 Médicaments</strong>
+                      <div className="mt-4 border-t border-gray-200 pt-4">
+                        <strong className="text-[#00572D] text-[12px] block mb-3">
+                          💊 Médicaments disponibles
+                        </strong>
 
-                        {loadingStock && <p style={{ fontSize: "10px", color: "#888", marginTop: "4px" }}>Chargement...</p>}
-                        {!loadingStock && stock.length === 0 && <p style={{ fontSize: "10px", color: "#888", marginTop: "4px" }}>Aucun médicament</p>}
+                        {loadingStock && (
+                          <p className="text-[11px] text-gray-500">
+                            Chargement...
+                          </p>
+                        )}
 
-                        {stock.map((s) => (
-                          <div key={s.id} style={{ marginTop: "6px", padding: "8px", background: "#f9fafb", borderRadius: "8px", border: "1px solid #e5e7eb" }}>
-                            {/* NOM */}
-                            <strong style={{ fontSize: "11px", color: "#00572D" }}>💊 {s.medicines?.name}</strong>
-                            {/* DESCRIPTION */}
-                            {s.medicines?.description && (
-                              <p style={{ fontSize: "9px", color: "#6b7280", margin: "2px 0", lineHeight: "1.4" }}>
-                                {s.medicines.description}
-                              </p>
-                            )}
-                            {/* STOCK + PRIX */}
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px" }}>
-                              <span style={{ fontSize: "9px", color: s.quantity <= 0 ? "#dc2626" : "#059669", fontWeight: "bold" }}>
-                                📦 {s.quantity <= 0 ? "Rupture" : `${s.quantity} en stock`}
-                              </span>
-                              <span style={{ fontSize: "10px", fontWeight: "bold", color: "#00572D" }}>
-                                {s.price} FCFA
-                              </span>
-                            </div>
-                            {/* BOUTON */}
-                            <button
-                              disabled={s.quantity <= 0}
-                              onClick={() => reserve(s.medicine_id, p.id)}
-                              style={{
-                                width: "100%", marginTop: "5px",
-                                background: s.quantity <= 0 ? "#9ca3af" : "#00572D",
-                                color: "white", padding: "5px", border: "none",
-                                borderRadius: "6px", fontSize: "9px",
-                                cursor: s.quantity <= 0 ? "not-allowed" : "pointer",
-                                fontWeight: "bold",
-                              }}>
-                              {s.quantity <= 0 ? "Indisponible" : "Réserver"}
-                            </button>
+                        {!loadingStock && stock.length === 0 && (
+                          <p className="text-[11px] text-gray-500">
+                            Aucun médicament disponible
+                          </p>
+                        )}
+
+                        {!loadingStock && stock.length > 0 && (
+                          <div className="max-h-[52vh] overflow-y-auto pr-1 space-y-10">
+                            {stock.map((s) => (
+                              <PopupMedicineCard
+                                key={s.id}
+                                item={s}
+                                pharmacy={p}
+                                onReserve={reserve}
+                              />
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
                   </div>

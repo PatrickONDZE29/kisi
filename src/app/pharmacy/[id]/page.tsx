@@ -23,7 +23,12 @@ export default function PharmacyPublicPage({
   useEffect(() => { loadData(); }, [id]);
 
   async function loadData() {
-    const { data: pharmacyData } = await supabase.from("pharmacies").select("*").eq("id", id).single();
+    const { data: pharmacyData } = await supabase
+      .from("pharmacies")
+      .select("*")
+      .eq("id", id)
+      .single();
+
     if (!pharmacyData) { setLoading(false); return; }
     setPharmacy(pharmacyData);
 
@@ -40,10 +45,19 @@ export default function PharmacyPublicPage({
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) { setShowAuthModal(true); return; }
 
-    const { data: userData } = await supabase.from("users").select("role").eq("id", auth.user.id).single();
+    const { data: userData } = await supabase
+      .from("users")
+      .select("role")
+      .eq("id", auth.user.id)
+      .single();
+
     if (!userData || userData.role !== "user") { setShowAuthModal(true); return; }
 
-    const { data: profile } = await supabase.from("profiles").select("full_name, phone").eq("id", auth.user.id).single();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name, phone")
+      .eq("id", auth.user.id)
+      .single();
 
     const { error } = await supabase.from("reservations").insert({
       user_id: auth.user.id,
@@ -59,11 +73,15 @@ export default function PharmacyPublicPage({
   }
 
   if (loading) return (
-    <main className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950 text-black dark:text-white">Chargement...</main>
+    <main className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950 text-black dark:text-white">
+      Chargement...
+    </main>
   );
 
   if (!pharmacy) return (
-    <main className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950 text-black dark:text-white">Pharmacie introuvable</main>
+    <main className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950 text-black dark:text-white">
+      Pharmacie introuvable
+    </main>
   );
 
   return (
@@ -75,13 +93,32 @@ export default function PharmacyPublicPage({
           <div className="bg-white dark:bg-gray-900 rounded-3xl p-6 w-full max-w-md shadow-2xl">
             <div className="text-center">
               <div className="text-5xl mb-3">🔐</div>
-              <h2 className="text-2xl font-bold text-[#00572D] dark:text-green-400">Connexion requise</h2>
-              <p className="text-gray-600 dark:text-gray-300 mt-2">Vous devez avoir un compte utilisateur pour réserver.</p>
+              <h2 className="text-2xl font-bold text-[#00572D] dark:text-green-400">
+                Connexion requise
+              </h2>
+              <p className="text-gray-600 dark:text-gray-300 mt-2">
+                Vous devez avoir un compte utilisateur pour réserver.
+              </p>
             </div>
             <div className="mt-6 space-y-3">
-              <button onClick={() => { setShowAuthModal(false); router.push("/login"); }} className="w-full bg-[#00572D] text-white p-4 rounded-xl font-bold">Se connecter</button>
-              <button onClick={() => { setShowAuthModal(false); router.push("/register"); }} className="w-full border-2 border-[#00572D] text-[#00572D] dark:text-green-400 p-4 rounded-xl font-bold">Créer un compte</button>
-              <button onClick={() => setShowAuthModal(false)} className="w-full bg-gray-200 dark:bg-gray-800 text-black dark:text-white p-4 rounded-xl font-bold">Fermer</button>
+              <button
+                onClick={() => { setShowAuthModal(false); router.push("/login"); }}
+                className="w-full bg-[#00572D] text-white p-4 rounded-xl font-bold"
+              >
+                Se connecter
+              </button>
+              <button
+                onClick={() => { setShowAuthModal(false); router.push("/register"); }}
+                className="w-full border-2 border-[#00572D] text-[#00572D] dark:text-green-400 p-4 rounded-xl font-bold"
+              >
+                Créer un compte
+              </button>
+              <button
+                onClick={() => setShowAuthModal(false)}
+                className="w-full bg-gray-200 dark:bg-gray-800 text-black dark:text-white p-4 rounded-xl font-bold"
+              >
+                Fermer
+              </button>
             </div>
           </div>
         </div>
@@ -89,45 +126,84 @@ export default function PharmacyPublicPage({
 
       {/* COVER */}
       <div className="relative">
-        <img src={pharmacy.cover_url || "/cover-placeholder.jpg"} alt="Couverture" className="w-full h-64 object-cover" />
+        <img
+          src={pharmacy.cover_url || "/cover-placeholder.jpg"}
+          alt="Couverture"
+          className="w-full h-64 object-cover"
+        />
         <div className="absolute inset-0 bg-black/40" />
       </div>
 
       <div className="max-w-5xl mx-auto px-6">
+
+        {/* LOGO PHARMACIE */}
         <div className="-mt-16 relative z-10">
-          <img src={pharmacy.logo_url || "/pharmacie.png"} alt="Logo" className="w-32 h-32 rounded-full bg-white dark:bg-gray-900 p-2 shadow-xl border-4 border-white dark:border-gray-900" />
+          <img
+            src={pharmacy.logo_url || "/pharmacie.png"}
+            alt="Logo"
+            className="w-32 h-32 rounded-full bg-white dark:bg-gray-900 p-2 shadow-xl border-4 border-white dark:border-gray-900"
+          />
         </div>
 
+        {/* INFOS PHARMACIE */}
         <div className="mt-4">
-          <h1 className="text-4xl font-bold text-black dark:text-white">{pharmacy.name}</h1>
-          <p className="text-gray-600 dark:text-gray-300 mt-2">📍 {pharmacy.city || "Ville non renseignée"}</p>
-          {pharmacy.address && <p className="text-gray-600 dark:text-gray-300">🏠 {pharmacy.address}</p>}
-          <p className="text-gray-600 dark:text-gray-300">📞 {pharmacy.phone || "Non renseigné"}</p>
-          <p className="text-gray-600 dark:text-gray-300">🕒 {pharmacy.opening_hours || "Horaires non renseignés"}</p>
+          <h1 className="text-4xl font-bold text-black dark:text-white">
+            {pharmacy.name}
+          </h1>
+          <p className="text-gray-600 dark:text-gray-300 mt-2">
+            📍 {pharmacy.city || "Ville non renseignée"}
+          </p>
+          {pharmacy.address && (
+            <p className="text-gray-600 dark:text-gray-300">
+              🏠 {pharmacy.address}
+            </p>
+          )}
+          <p className="text-gray-600 dark:text-gray-300">
+            📞 {pharmacy.phone || "Non renseigné"}
+          </p>
+          <p className="text-gray-600 dark:text-gray-300">
+            🕒 {pharmacy.opening_hours || "Horaires non renseignés"}
+          </p>
           <div className="mt-3">
-            {pharmacy.is_open
-              ? <span className="bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 px-4 py-2 rounded-full font-bold">🟢 Ouverte</span>
-              : <span className="bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 px-4 py-2 rounded-full font-bold">🔴 Fermée</span>}
+            {pharmacy.is_open ? (
+              <span className="bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 px-4 py-2 rounded-full font-bold">
+                🟢 Ouverte
+              </span>
+            ) : (
+              <span className="bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 px-4 py-2 rounded-full font-bold">
+                🔴 Fermée
+              </span>
+            )}
           </div>
+
+          {/* DESCRIPTION */}
           <div className="mt-6 bg-gray-100 dark:bg-gray-900 rounded-2xl p-5">
             <h2 className="font-bold text-xl text-black dark:text-white">Description</h2>
-            <p className="text-gray-700 dark:text-gray-300 mt-2">{pharmacy.description || "Aucune description disponible."}</p>
+            <p className="text-gray-700 dark:text-gray-300 mt-2">
+              {pharmacy.description || "Aucune description disponible."}
+            </p>
           </div>
         </div>
 
         {/* MÉDICAMENTS */}
-        <div className="mt-10 pb-28">
-          <h2 className="text-3xl font-bold text-[#00572D] dark:text-green-400 mb-6">💊 Médicaments disponibles</h2>
+        <div className="mt-16 pb-28">
+          <h2 className="text-3xl font-bold text-[#00572D] dark:text-green-400 mb-10">
+            💊 Médicaments disponibles
+          </h2>
 
           {stocks.length === 0 && (
-            <div className="bg-gray-100 dark:bg-gray-900 rounded-2xl p-6 text-black dark:text-white">Aucun médicament disponible</div>
+            <div className="bg-gray-100 dark:bg-gray-900 rounded-2xl p-6 text-black dark:text-white">
+              Aucun médicament disponible
+            </div>
           )}
 
-          <div className="grid md:grid-cols-2 gap-5">
+          {/* GRILLE CORRIGÉE — gap-y-16 + pt-10 pour les cercles */}
+          <div className="grid md:grid-cols-2 gap-x-5 gap-y-16 pt-10">
             {stocks.map((item) => (
               <MedicineCard key={item.id} item={item} onReserve={reserveMedicine} />
             ))}
           </div>
+
         </div>
       </div>
     </main>
