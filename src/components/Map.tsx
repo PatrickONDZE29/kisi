@@ -28,67 +28,72 @@ function ImageModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-[99999] bg-black/90 flex flex-col items-center justify-center p-6"
+      className="fixed inset-0 z-[99999] bg-black/90 overflow-y-auto"
       onClick={onClose}
     >
-      {/* Bouton fermer */}
-      <button
-        onClick={onClose}
-        className="absolute top-5 right-5 text-white text-3xl font-bold bg-black/50 w-10 h-10 rounded-full flex items-center justify-center hover:bg-black/80 transition"
-      >
-        ✕
-      </button>
+      <div className="min-h-full flex flex-col items-center justify-start py-10 px-5">
 
-      {/* Image grande */}
-      <div
-        className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {med?.image_url ? (
-          <img
-            src={med.image_url}
-            alt={med?.name || "Médicament"}
-            className="w-full object-contain max-h-[60vh]"
-          />
-        ) : (
-          <div className="w-full h-64 bg-gray-800 flex items-center justify-center text-7xl rounded-3xl">
-            💊
-          </div>
-        )}
-      </div>
-
-      {/* Nom + description sous l'image */}
-      <div
-        className="mt-5 w-full max-w-sm bg-white dark:bg-gray-900 rounded-3xl p-5 text-center shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">
-          💊 {med?.name || "Médicament"}
-        </h2>
-
-        <p className="text-gray-600 dark:text-gray-300 text-sm mt-3 leading-relaxed">
-          {med?.description || "Aucune description disponible"}
-        </p>
-
-        <div className="flex items-center justify-between mt-4">
-          <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
-            outOfStock
-              ? "bg-red-100 text-red-600"
-              : "bg-green-100 text-green-700"
-          }`}>
-            📦 {outOfStock ? "Rupture" : `${quantity} en stock`}
-          </span>
-          <span className="font-bold text-[#00572D] dark:text-green-400 text-lg">
-            {(price ?? 0).toLocaleString()} FCFA
-          </span>
-        </div>
-
+        {/* Bouton fermer */}
         <button
           onClick={onClose}
-          className="mt-4 w-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2.5 rounded-xl font-bold text-sm"
+          className="fixed top-4 right-4 text-white text-3xl font-bold bg-black/50 w-10 h-10 rounded-full flex items-center justify-center hover:bg-black/80 transition z-[100000]"
         >
-          Fermer
+          ✕
         </button>
+
+        {/* Image grande */}
+        <div
+          className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl bg-black"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {med?.image_url ? (
+            <img
+              src={med.image_url}
+              alt={med?.name || "Médicament"}
+              className="w-full object-contain max-h-[50vh]"
+            />
+          ) : (
+            <div className="w-full h-56 bg-gray-800 flex items-center justify-center text-7xl rounded-3xl">
+              💊
+            </div>
+          )}
+        </div>
+
+        {/* Infos sous l'image — scrollable naturellement */}
+        <div
+          className="mt-5 w-full max-w-sm bg-white dark:bg-gray-900 rounded-3xl p-5 shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400 text-center">
+            💊 {med?.name || "Médicament"}
+          </h2>
+
+          {/* Description complète — pas de line-clamp, tout est visible et scrollable */}
+          <p className="text-gray-600 dark:text-gray-300 text-sm mt-3 leading-relaxed whitespace-pre-line">
+            {med?.description || "Aucune description disponible"}
+          </p>
+
+          <div className="flex items-center justify-between mt-4">
+            <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
+              outOfStock
+                ? "bg-red-100 text-red-600"
+                : "bg-green-100 text-green-700"
+            }`}>
+              📦 {outOfStock ? "Rupture" : `${quantity} en stock`}
+            </span>
+            <span className="font-bold text-[#00572D] dark:text-green-400 text-lg">
+              {(price ?? 0).toLocaleString()} FCFA
+            </span>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="mt-4 w-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2.5 rounded-xl font-bold text-sm"
+          >
+            Fermer
+          </button>
+        </div>
+
       </div>
     </div>
   );
@@ -128,7 +133,6 @@ function PopupMedicineCard({
 
   return (
     <>
-      {/* Modal plein écran */}
       {showImageModal && (
         <ImageModal
           med={med}
