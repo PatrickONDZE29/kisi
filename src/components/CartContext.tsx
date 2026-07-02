@@ -35,8 +35,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
       if (prev.find((i) => i.id === item.id)) return prev;
       return [...prev, item];
     });
-    // Ouvre le panier automatiquement dès qu'on ajoute un article
-    setShowCart(true);
+    // ✅ PAS de setShowCart(true) ici
+    // Le bouton flottant apparaît grâce au count > 0
+    // Le modal s'ouvre UNIQUEMENT au clic sur le bouton flottant
   }, []);
 
   const removeItem = useCallback((id: string) => {
@@ -61,7 +62,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       openCart, closeCart,
     }}>
       {children}
-      {/* CartModal global — disponible sur toutes les pages */}
+      {/* CartModal global — s'ouvre UNIQUEMENT via openCart() au clic sur le bouton flottant */}
       {showCart && <CartModal onClose={closeCart} />}
     </CartContext.Provider>
   );
