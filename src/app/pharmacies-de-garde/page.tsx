@@ -82,18 +82,17 @@ export default function PharmaciesDeGardePage() {
   if (loading) {
     return (
       <main className="min-h-screen relative overflow-hidden">
-        {/* Image arrière-plan même pendant le chargement */}
         <div
           className={`absolute inset-0 transition-all duration-[1500ms] ease-out ${
             bgLoaded
-              ? "translate-x-0 opacity-100 scale-100"
-              : "translate-x-full opacity-0 scale-110"
+              ? "translate-x-0 opacity-100"
+              : "translate-x-full opacity-0"
           }`}
         >
           <img
             src="/recherche.png"
             alt="Arrière-plan"
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover scale-75 bg-[#00572D]"
           />
         </div>
         <div className="absolute inset-0 bg-[#00572D]/75 dark:bg-gray-950/85" />
@@ -113,14 +112,14 @@ export default function PharmaciesDeGardePage() {
       <div
         className={`absolute inset-0 transition-all duration-[1500ms] ease-out ${
           bgLoaded
-            ? "translate-x-0 opacity-100 scale-100"
-            : "translate-x-full opacity-0 scale-110"
+            ? "translate-x-0 opacity-100"
+            : "translate-x-full opacity-0"
         }`}
       >
         <img
           src="/recherche.png"
           alt="Arrière-plan"
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover scale-75 bg-[#00572D]"
         />
       </div>
 
@@ -195,7 +194,7 @@ export default function PharmaciesDeGardePage() {
               <Link
                 key={pharmacy.id}
                 href={`/pharmacy/${pharmacy.id}`}
-                className={`block bg-white/95 dark:bg-gray-900/95 backdrop-blur-md rounded-3xl shadow-lg hover:-translate-y-1 hover:shadow-2xl transition-all duration-200 overflow-hidden ${
+                className={`block bg-white/95 dark:bg-gray-900/95 backdrop-blur-md rounded-3xl shadow-lg hover:-translate-y-1 hover:shadow-2xl transition-all overflow-hidden ${
                   bgLoaded ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
                 }`}
                 style={{
