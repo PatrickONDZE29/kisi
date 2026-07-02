@@ -7,11 +7,91 @@ import { useCart } from "@/components/CartContext";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
-// ✅ Fonction utilitaire pour extraire medicines (objet OU tableau)
 function getMedicine(item: any): { name?: string; description?: string; image_url?: string } | null {
   if (!item.medicines) return null;
   if (Array.isArray(item.medicines)) return item.medicines[0] || null;
   return item.medicines;
+}
+
+function ImageModal({
+  med,
+  quantity,
+  price,
+  outOfStock,
+  onClose,
+}: {
+  med: { name?: string; description?: string; image_url?: string } | null;
+  quantity: number;
+  price: number;
+  outOfStock: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[99999] bg-black/90 flex flex-col items-center justify-center p-6"
+      onClick={onClose}
+    >
+      {/* Bouton fermer */}
+      <button
+        onClick={onClose}
+        className="absolute top-5 right-5 text-white text-3xl font-bold bg-black/50 w-10 h-10 rounded-full flex items-center justify-center hover:bg-black/80 transition"
+      >
+        ✕
+      </button>
+
+      {/* Image grande */}
+      <div
+        className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {med?.image_url ? (
+          <img
+            src={med.image_url}
+            alt={med?.name || "Médicament"}
+            className="w-full object-contain max-h-[60vh]"
+          />
+        ) : (
+          <div className="w-full h-64 bg-gray-800 flex items-center justify-center text-7xl rounded-3xl">
+            💊
+          </div>
+        )}
+      </div>
+
+      {/* Nom + description sous l'image */}
+      <div
+        className="mt-5 w-full max-w-sm bg-white dark:bg-gray-900 rounded-3xl p-5 text-center shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">
+          💊 {med?.name || "Médicament"}
+        </h2>
+
+        <p className="text-gray-600 dark:text-gray-300 text-sm mt-3 leading-relaxed">
+          {med?.description || "Aucune description disponible"}
+        </p>
+
+        <div className="flex items-center justify-between mt-4">
+          <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
+            outOfStock
+              ? "bg-red-100 text-red-600"
+              : "bg-green-100 text-green-700"
+          }`}>
+            📦 {outOfStock ? "Rupture" : `${quantity} en stock`}
+          </span>
+          <span className="font-bold text-[#00572D] dark:text-green-400 text-lg">
+            {(price ?? 0).toLocaleString()} FCFA
+          </span>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="mt-4 w-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2.5 rounded-xl font-bold text-sm"
+        >
+          Fermer
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function PopupMedicineCard({
@@ -27,6 +107,7 @@ function PopupMedicineCard({
   const inCart = isInCart(item.id);
   const outOfStock = (item.quantity ?? 0) <= 0;
   const med = getMedicine(item);
+  const [showImageModal, setShowImageModal] = useState(false);
 
   function handleCartClick() {
     if (inCart) {
@@ -46,78 +127,95 @@ function PopupMedicineCard({
   }
 
   return (
-    <div className="relative rounded-2xl border border-gray-200 bg-white p-3 pt-9 shadow-sm">
-      {/* Image ronde */}
-      <div className="absolute -top-7 left-1/2 -translate-x-1/2">
-        <div className="w-14 h-14 rounded-full border-4 border-white shadow-md overflow-hidden bg-gray-100">
-          {med?.image_url ? (
-            <img
-              src={med.image_url}
-              alt={med?.name || "Médicament"}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-xl">
-              💊
-            </div>
-          )}
+    <>
+      {/* Modal plein écran */}
+      {showImageModal && (
+        <ImageModal
+          med={med}
+          quantity={item.quantity}
+          price={item.price}
+          outOfStock={outOfStock}
+          onClose={() => setShowImageModal(false)}
+        />
+      )}
+
+      <div className="relative rounded-2xl border border-gray-200 bg-white p-3 pt-9 shadow-sm">
+        {/* Image ronde — cliquable */}
+        <div className="absolute -top-7 left-1/2 -translate-x-1/2">
+          <div
+            onClick={() => setShowImageModal(true)}
+            className="w-14 h-14 rounded-full border-4 border-white shadow-md overflow-hidden bg-gray-100 cursor-pointer hover:scale-110 transition-transform duration-200"
+            title="Voir en plein écran"
+          >
+            {med?.image_url ? (
+              <img
+                src={med.image_url}
+                alt={med?.name || "Médicament"}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-xl">
+                💊
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Nom */}
-      <h4 className="text-center font-bold text-[#00572D] text-[13px] leading-tight break-words">
-        {med?.name || "Médicament"}
-      </h4>
+        {/* Nom */}
+        <h4 className="text-center font-bold text-[#00572D] text-[13px] leading-tight break-words">
+          {med?.name || "Médicament"}
+        </h4>
 
-      {/* Description */}
-      <p className="text-center text-gray-500 text-[11px] mt-1 leading-snug break-words line-clamp-2">
-        {med?.description || "Aucune description disponible"}
-      </p>
+        {/* Description */}
+        <p className="text-center text-gray-500 text-[11px] mt-1 leading-snug break-words line-clamp-2">
+          {med?.description || "Aucune description disponible"}
+        </p>
 
-      {/* Stock + prix */}
-      <div className="flex items-center justify-between gap-2 mt-3">
-        <span
-          className={`text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${
-            outOfStock
-              ? "bg-red-100 text-red-600"
-              : "bg-green-100 text-green-700"
-          }`}
-        >
-          📦 {outOfStock ? "Rupture" : `${item.quantity} stock`}
-        </span>
-
-        <span className="font-bold text-[#00572D] text-[12px] whitespace-nowrap">
-          {(item.price ?? 0).toLocaleString()} FCFA
-        </span>
-      </div>
-
-      {/* Actions */}
-      {!outOfStock ? (
-        <div className="grid grid-cols-1 gap-2 mt-3">
-          <button
-            onClick={handleCartClick}
-            className={`w-full py-2 rounded-xl font-bold text-[11px] border transition ${
-              inCart
-                ? "bg-[#00572D] text-white border-[#00572D]"
-                : "bg-white text-[#00572D] border-[#00572D]"
+        {/* Stock + prix */}
+        <div className="flex items-center justify-between gap-2 mt-3">
+          <span
+            className={`text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${
+              outOfStock
+                ? "bg-red-100 text-red-600"
+                : "bg-green-100 text-green-700"
             }`}
           >
-            {inCart ? "✅ Voir le panier" : "🛒 Ajouter au panier"}
-          </button>
+            📦 {outOfStock ? "Rupture" : `${item.quantity} stock`}
+          </span>
 
-          <button
-            onClick={() => onReserve(item.medicine_id, pharmacy.id)}
-            className="w-full bg-[#00572D] text-white py-2 rounded-xl font-bold text-[11px]"
-          >
-            Réserver
-          </button>
+          <span className="font-bold text-[#00572D] text-[12px] whitespace-nowrap">
+            {(item.price ?? 0).toLocaleString()} FCFA
+          </span>
         </div>
-      ) : (
-        <div className="mt-3 w-full bg-gray-100 text-gray-400 py-2 rounded-xl font-bold text-[11px] text-center">
-          Indisponible
-        </div>
-      )}
-    </div>
+
+        {/* Actions */}
+        {!outOfStock ? (
+          <div className="grid grid-cols-1 gap-2 mt-3">
+            <button
+              onClick={handleCartClick}
+              className={`w-full py-2 rounded-xl font-bold text-[11px] border transition ${
+                inCart
+                  ? "bg-[#00572D] text-white border-[#00572D]"
+                  : "bg-white text-[#00572D] border-[#00572D]"
+              }`}
+            >
+              {inCart ? "✅ Voir le panier" : "🛒 Ajouter au panier"}
+            </button>
+
+            <button
+              onClick={() => onReserve(item.medicine_id, pharmacy.id)}
+              className="w-full bg-[#00572D] text-white py-2 rounded-xl font-bold text-[11px]"
+            >
+              Réserver
+            </button>
+          </div>
+        ) : (
+          <div className="mt-3 w-full bg-gray-100 text-gray-400 py-2 rounded-xl font-bold text-[11px] text-center">
+            Indisponible
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -248,7 +346,7 @@ export default function Map() {
           border-radius: 18px !important;
           box-shadow: 0 8px 30px rgba(0,0,0,0.18) !important;
           padding: 0 !important;
-          overflow: hidden !important;
+          overflow: visible !important;
         }
 
         .leaflet-popup-content {
@@ -256,6 +354,7 @@ export default function Map() {
           width: auto !important;
           min-width: min(78vw, 280px) !important;
           max-width: min(88vw, 320px) !important;
+          overflow: visible !important;
         }
 
         .leaflet-popup-close-button {
@@ -352,7 +451,7 @@ export default function Map() {
                         )}
 
                         {!loadingStock && stock.length > 0 && (
-                          <div className="max-h-[52vh] overflow-y-auto pr-1 space-y-10">
+                          <div className="max-h-[52vh] overflow-y-auto overflow-x-hidden pr-1 space-y-10 pt-8">
                             {stock.map((s) => (
                               <PopupMedicineCard
                                 key={s.id}
