@@ -85,14 +85,14 @@ export default function PharmaciesDeGardePage() {
         <div
           className={`absolute inset-0 transition-all duration-[1500ms] ease-out ${
             bgLoaded
-              ? "translate-x-0 opacity-100"
-              : "translate-x-full opacity-0"
+              ? "translate-x-0 opacity-100 scale-100"
+              : "translate-x-full opacity-0 scale-110"
           }`}
         >
           <img
             src="/recherche.png"
             alt="Arrière-plan"
-            className="w-full h-full object-cover scale-75 bg-[#00572D]"
+            className="w-full h-full object-cover"
           />
         </div>
         <div className="absolute inset-0 bg-[#00572D]/75 dark:bg-gray-950/85" />
@@ -108,18 +108,18 @@ export default function PharmaciesDeGardePage() {
   return (
     <main className="min-h-screen relative overflow-hidden">
 
-      {/* ========== IMAGE ARRIÈRE-PLAN — DROITE VERS CENTRE ========== */}
+      {/* ========== IMAGE ARRIÈRE-PLAN — identique à la page recherche ========== */}
       <div
         className={`absolute inset-0 transition-all duration-[1500ms] ease-out ${
           bgLoaded
-            ? "translate-x-0 opacity-100"
-            : "translate-x-full opacity-0"
+            ? "translate-x-0 opacity-100 scale-100"
+            : "translate-x-full opacity-0 scale-110"
         }`}
       >
         <img
           src="/recherche.png"
           alt="Arrière-plan"
-          className="w-full h-full object-cover scale-75 bg-[#00572D]"
+          className="w-full h-full object-cover"
         />
       </div>
 
@@ -226,7 +226,7 @@ export default function PharmaciesDeGardePage() {
                     </h2>
                   </div>
 
-                  {/* Informations en liste verticale */}
+                  {/* Informations */}
                   <div className="space-y-2.5">
 
                     {pharmacy.city || pharmacy.address ? (
