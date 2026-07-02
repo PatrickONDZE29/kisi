@@ -90,7 +90,7 @@ export default function PharmaciesDeGardePage() {
           }`}
         >
           <img
-            src="/recherche.png"
+            src="/accueil1.png"
             alt="Arrière-plan"
             className="w-full h-full object-cover"
           />
@@ -117,7 +117,7 @@ export default function PharmaciesDeGardePage() {
         }`}
       >
         <img
-          src="/recherche.png"
+          src="/accueil1.png"
           alt="Arrière-plan"
           className="w-full h-full object-cover"
         />
