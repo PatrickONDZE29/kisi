@@ -28,72 +28,72 @@ function ImageModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-[99999] bg-black/90 overflow-y-auto"
+      className="fixed inset-0 z-[99999] bg-black/90"
       onClick={onClose}
     >
-      <div className="min-h-full flex flex-col items-center justify-start py-10 px-5">
+      {/* Bouton fermer — toujours visible */}
+      <button
+        onClick={onClose}
+        className="fixed top-3 right-3 text-white text-2xl font-bold bg-black/50 w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/80 transition z-[100000]"
+      >
+        ✕
+      </button>
 
-        {/* Bouton fermer */}
-        <button
-          onClick={onClose}
-          className="fixed top-4 right-4 text-white text-3xl font-bold bg-black/50 w-10 h-10 rounded-full flex items-center justify-center hover:bg-black/80 transition z-[100000]"
-        >
-          ✕
-        </button>
-
-        {/* Image grande */}
+      {/* Contenu scrollable */}
+      <div className="h-full overflow-y-auto px-4 py-6">
         <div
-          className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl bg-black"
+          className="max-w-xs mx-auto flex flex-col items-center"
           onClick={(e) => e.stopPropagation()}
         >
-          {med?.image_url ? (
-            <img
-              src={med.image_url}
-              alt={med?.name || "Médicament"}
-              className="w-full object-contain max-h-[50vh]"
-            />
-          ) : (
-            <div className="w-full h-56 bg-gray-800 flex items-center justify-center text-7xl rounded-3xl">
-              💊
-            </div>
-          )}
-        </div>
 
-        {/* Infos sous l'image — scrollable naturellement */}
-        <div
-          className="mt-5 w-full max-w-sm bg-white dark:bg-gray-900 rounded-3xl p-5 shadow-xl"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400 text-center">
-            💊 {med?.name || "Médicament"}
-          </h2>
-
-          {/* Description complète — pas de line-clamp, tout est visible et scrollable */}
-          <p className="text-gray-600 dark:text-gray-300 text-sm mt-3 leading-relaxed whitespace-pre-line">
-            {med?.description || "Aucune description disponible"}
-          </p>
-
-          <div className="flex items-center justify-between mt-4">
-            <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
-              outOfStock
-                ? "bg-red-100 text-red-600"
-                : "bg-green-100 text-green-700"
-            }`}>
-              📦 {outOfStock ? "Rupture" : `${quantity} en stock`}
-            </span>
-            <span className="font-bold text-[#00572D] dark:text-green-400 text-lg">
-              {(price ?? 0).toLocaleString()} FCFA
-            </span>
+          {/* Image */}
+          <div className="w-full rounded-2xl overflow-hidden shadow-xl bg-black">
+            {med?.image_url ? (
+              <img
+                src={med.image_url}
+                alt={med?.name || "Médicament"}
+                className="w-full object-contain max-h-[40vh]"
+              />
+            ) : (
+              <div className="w-full h-44 bg-gray-800 flex items-center justify-center text-5xl">
+                💊
+              </div>
+            )}
           </div>
 
-          <button
-            onClick={onClose}
-            className="mt-4 w-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2.5 rounded-xl font-bold text-sm"
-          >
-            Fermer
-          </button>
-        </div>
+          {/* Infos */}
+          <div className="mt-3 w-full bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl">
 
+            <h2 className="text-base font-bold text-[#00572D] dark:text-green-400 text-center leading-tight">
+              💊 {med?.name || "Médicament"}
+            </h2>
+
+            <p className="text-gray-600 dark:text-gray-300 text-xs mt-2 leading-relaxed whitespace-pre-line">
+              {med?.description || "Aucune description disponible"}
+            </p>
+
+            <div className="flex items-center justify-between mt-3">
+              <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                outOfStock
+                  ? "bg-red-100 text-red-600"
+                  : "bg-green-100 text-green-700"
+              }`}>
+                📦 {outOfStock ? "Rupture" : `${quantity} stock`}
+              </span>
+              <span className="font-bold text-[#00572D] dark:text-green-400 text-sm">
+                {(price ?? 0).toLocaleString()} FCFA
+              </span>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="mt-3 w-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-bold text-xs"
+            >
+              Fermer
+            </button>
+          </div>
+
+        </div>
       </div>
     </div>
   );
