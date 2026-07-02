@@ -7,24 +7,11 @@ import { useCart } from "@/components/CartContext";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
-interface Pharmacy {
-  [key: string]: any;
-  id: string;
-}
-
-// ✅ medicines est un TABLEAU (retour Supabase)
-interface StockItem {
-  [key: string]: any;
-  id: string;
-  quantity: number;
-  price: number;
-  medicine_id: string;
-  pharmacy_id?: string;
-  medicines?: {
-    name?: string;
-    description?: string;
-    image_url?: string;
-  }[];
+// ✅ Fonction utilitaire pour extraire medicines (objet OU tableau)
+function getMedicine(item: any): { name?: string; description?: string; image_url?: string } | null {
+  if (!item.medicines) return null;
+  if (Array.isArray(item.medicines)) return item.medicines[0] || null;
+  return item.medicines;
 }
 
 function PopupMedicineCard({
@@ -32,16 +19,14 @@ function PopupMedicineCard({
   pharmacy,
   onReserve,
 }: {
-  item: StockItem;
-  pharmacy: Pharmacy;
+  item: any;
+  pharmacy: any;
   onReserve: (medicineId: string, pharmacyId: string) => void;
 }) {
   const { addItem, isInCart, openCart } = useCart();
   const inCart = isInCart(item.id);
   const outOfStock = (item.quantity ?? 0) <= 0;
-
-  // ✅ Prend le premier élément du tableau medicines
-  const med = item.medicines?.[0];
+  const med = getMedicine(item);
 
   function handleCartClick() {
     if (inCart) {
@@ -138,7 +123,7 @@ function PopupMedicineCard({
 
 export default function Map() {
   const [pharmacies, setPharmacies] = useState<any[]>([]);
-  const [stock, setStock] = useState<StockItem[]>([]);
+  const [stock, setStock] = useState<any[]>([]);
   const [selectedPharmacyId, setSelectedPharmacyId] = useState<string | null>(null);
   const [loadingStock, setLoadingStock] = useState(false);
   const [leafletReady, setLeafletReady] = useState(false);
@@ -239,8 +224,8 @@ export default function Map() {
     }
 
     showToast("Réservation envoyée !");
-    openPharmacy(pharmacyId);
-    openPharmacy(pharmacyId);
+    setSelectedPharmacyId(null);
+    setStock([]);
   }
 
   if (!leafletReady) {
