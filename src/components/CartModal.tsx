@@ -129,7 +129,7 @@ export default function CartModal({ onClose }: CartModalProps) {
         </div>
 
         {/* CONTENT */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        <div className="flex-1 overflow-y-auto px-5 py-4">
 
           {safeItems.length === 0 && (
             <div className="text-center py-10">
@@ -138,10 +138,19 @@ export default function CartModal({ onClose }: CartModalProps) {
             </div>
           )}
 
-          {Object.entries(byPharmacy).map(([pharmacyId, group]: any) => (
-            <div key={pharmacyId}>
+          {Object.entries(byPharmacy).map(([pharmacyId, group]: any, index) => (
+            <div
+              key={pharmacyId}
+              {/* ✅ SEPARATEUR ENTRE CHAQUE PHARMACIE */}
+              className={`
+                border-b border-gray-200 dark:border-gray-700
+                pb-6 pt-6
+                first:pt-0
+                last:border-b-0 last:pb-0
+              `}
+            >
 
-              <p className="font-bold text-[#00572D] dark:text-green-400 mb-2">
+              <p className="font-bold text-[#00572D] dark:text-green-400 mb-3">
                 🏥 {group.pharmacy_name}
               </p>
 
