@@ -104,17 +104,12 @@ export default function CartModal({ onClose }: CartModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-3 sm:px-6">
-
       {/* CART MODAL */}
       <div className="bg-white dark:bg-gray-900 dark:text-white w-[92%] sm:w-full sm:max-w-lg rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
-
         {/* HEADER */}
         <div className="flex items-center justify-between px-5 py-4 border-b dark:border-gray-700">
           <div>
-            <h2 className="text-xl font-bold">
-              🛒 Mon panier
-            </h2>
-
+            <h2 className="text-xl font-bold">🛒 Mon panier</h2>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {safeItems.length} article(s)
             </p>
@@ -130,66 +125,82 @@ export default function CartModal({ onClose }: CartModalProps) {
 
         {/* CONTENT */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-
           {safeItems.length === 0 && (
             <div className="text-center py-10">
-              🛒
+              <div className="text-4xl mb-2">🛒</div>
               <p>Panier vide</p>
             </div>
           )}
 
-          {Object.entries(byPharmacy).map(([pharmacyId, group]: any, index) => (
-            <div
-              key={pharmacyId}
-              {/* ✅ SEPARATEUR ENTRE CHAQUE PHARMACIE */}
-              className={`
-                border-b border-gray-200 dark:border-gray-700
-                pb-6 pt-6
-                first:pt-0
-                last:border-b-0 last:pb-0
-              `}
-            >
+          {safeItems.length > 0 && (
+            <div className="space-y-4">
+              {Object.entries(byPharmacy).map(([pharmacyId, group]: any) => {
+                const pharmacySubtotal = group.items.reduce(
+                  (sum: number, item: any) => sum + (item.price || 0),
+                  0
+                );
 
-              <p className="font-bold text-[#00572D] dark:text-green-400 mb-3">
-                🏥 {group.pharmacy_name}
-              </p>
-
-              <div className="space-y-2 ml-4">
-                {group.items.map((item: any) => (
+                return (
                   <div
-                    key={item.id}
-                    className="flex justify-between bg-gray-50 dark:bg-gray-800 p-3 rounded-xl"
+                    key={pharmacyId}
+                    className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 p-4 shadow-sm"
                   >
-                    <div>
-                      <p>
-                        💊 {item.medicine_name}
-                      </p>
+                    {/* HEADER PHARMACIE */}
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <p className="font-bold text-[#00572D] dark:text-green-400">
+                          🏥 {group.pharmacy_name}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {group.items.length} article(s)
+                        </p>
+                      </div>
 
-                      <p className="font-bold text-[#00572D] dark:text-green-400">
-                        {item.price.toLocaleString()} FCFA
-                      </p>
+                      <div className="text-right">
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Sous-total
+                        </p>
+                        <p className="font-bold text-[#00572D] dark:text-green-400 text-sm">
+                          {pharmacySubtotal.toLocaleString()} FCFA
+                        </p>
+                      </div>
                     </div>
 
-                    <button
-                      onClick={() => removeItem(item.id)}
-                      className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition"
-                    >
-                      🗑
-                    </button>
+                    {/* ITEMS */}
+                    <div className="space-y-2">
+                      {group.items.map((item: any) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-3 bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-700"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-medium text-sm">
+                              💊 {item.medicine_name}
+                            </p>
+                            <p className="font-bold text-[#00572D] dark:text-green-400 text-sm mt-1">
+                              {(item.price || 0).toLocaleString()} FCFA
+                            </p>
+                          </div>
 
+                          <button
+                            onClick={() => removeItem(item.id)}
+                            className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition shrink-0"
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
-              </div>
-
+                );
+              })}
             </div>
-          ))}
-
+          )}
         </div>
 
         {/* FOOTER */}
         {safeItems.length > 0 && (
           <div className="p-4 border-t dark:border-gray-700">
-
             <div className="flex justify-between font-bold">
               <span>Total</span>
               <span>{total.toLocaleString()} FCFA</span>
@@ -209,18 +220,14 @@ export default function CartModal({ onClose }: CartModalProps) {
             >
               Vider le panier
             </button>
-
           </div>
         )}
-
       </div>
 
       {/* AUTH MODAL */}
       {showAuthModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center px-4 z-50">
-
           <div className="bg-white dark:bg-gray-900 dark:text-white p-6 rounded-2xl w-full max-w-md text-center">
-
             <div className="flex justify-center mb-3">
               <div className="w-14 h-14 rounded-full bg-yellow-400 flex items-center justify-center text-white text-2xl font-bold shadow-md">
                 !
@@ -236,7 +243,6 @@ export default function CartModal({ onClose }: CartModalProps) {
             </p>
 
             <div className="mt-5 space-y-3">
-
               <button
                 onClick={() => router.push("/login")}
                 className="w-full bg-[#00572D] text-white p-3 rounded-xl"
@@ -257,14 +263,10 @@ export default function CartModal({ onClose }: CartModalProps) {
               >
                 Fermer
               </button>
-
             </div>
-
           </div>
-
         </div>
       )}
-
     </div>
   );
 }
