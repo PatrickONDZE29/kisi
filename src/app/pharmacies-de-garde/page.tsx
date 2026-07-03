@@ -126,7 +126,7 @@ export default function PharmaciesDeGardePage() {
       </div>
 
       {/* OVERLAY — plus opaque en clair pour pas faire mal aux yeux */}
-      <div className="absolute inset-0 bg-[#00572D]/85 dark:bg-gray-950/85" />
+      <div className="absolute inset-0 bg-[#00572D]/95 dark:bg-gray-950/85" />
 
       {/* CONTENU */}
       <div className="relative z-10">

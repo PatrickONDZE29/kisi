@@ -90,7 +90,7 @@ export default function SearchPage() {
       </div>
 
       {/* OVERLAY — doux en clair, sombre en dark */}
-      <div className="absolute inset-0 bg-[#00572D]/85 dark:bg-gray-950/85" />
+      <div className="absolute inset-0 bg-[#00572D]/95 dark:bg-gray-950/85" />
 
       {/* CONTENU */}
       <div className="relative z-10 p-4 sm:p-6">
