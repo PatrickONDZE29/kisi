@@ -39,10 +39,7 @@ export default function CartModal({ onClose }: CartModalProps) {
   }, 0);
 
   async function getUser() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
+    const { data: { user } } = await supabase.auth.getUser();
     return user;
   }
 
@@ -95,7 +92,7 @@ export default function CartModal({ onClose }: CartModalProps) {
     if (failed === 0) {
       showToast(`${success} réservation(s) envoyée(s)`);
       clearCart();
-      onClose();
+      onClose(); // ferme le modal après succès
       router.push("/reservations");
     } else {
       showToast(`${success} OK / ${failed} erreurs`, "error");
@@ -103,8 +100,8 @@ export default function CartModal({ onClose }: CartModalProps) {
   }
 
   return (
+    // ❌ Pas de onClick sur ce div : empêche la fermeture au clic sur l'overlay
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-3 sm:px-6">
-      {/* CART MODAL */}
       <div className="bg-white dark:bg-gray-900 dark:text-white w-[92%] sm:w-full sm:max-w-lg rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
         {/* HEADER */}
         <div className="flex items-center justify-between px-5 py-4 border-b dark:border-gray-700">
@@ -115,9 +112,10 @@ export default function CartModal({ onClose }: CartModalProps) {
             </p>
           </div>
 
+          {/* C'est le SEUL bouton pour fermer le modal */}
           <button
             onClick={onClose}
-            className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-800"
+            className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition"
           >
             ✕
           </button>
@@ -145,7 +143,6 @@ export default function CartModal({ onClose }: CartModalProps) {
                     key={pharmacyId}
                     className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 p-4 shadow-sm"
                   >
-                    {/* HEADER PHARMACIE */}
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <div>
                         <p className="font-bold text-[#00572D] dark:text-green-400">
@@ -155,18 +152,14 @@ export default function CartModal({ onClose }: CartModalProps) {
                           {group.items.length} article(s)
                         </p>
                       </div>
-
                       <div className="text-right">
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Sous-total
-                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Sous-total</p>
                         <p className="font-bold text-[#00572D] dark:text-green-400 text-sm">
                           {pharmacySubtotal.toLocaleString()} FCFA
                         </p>
                       </div>
                     </div>
 
-                    {/* ITEMS */}
                     <div className="space-y-2">
                       {group.items.map((item: any) => (
                         <div
@@ -174,14 +167,11 @@ export default function CartModal({ onClose }: CartModalProps) {
                           className="flex items-center justify-between gap-3 bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-700"
                         >
                           <div className="min-w-0">
-                            <p className="font-medium text-sm">
-                              💊 {item.medicine_name}
-                            </p>
+                            <p className="font-medium text-sm">💊 {item.medicine_name}</p>
                             <p className="font-bold text-[#00572D] dark:text-green-400 text-sm mt-1">
                               {(item.price || 0).toLocaleString()} FCFA
                             </p>
                           </div>
-
                           <button
                             onClick={() => removeItem(item.id)}
                             className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition shrink-0"
@@ -215,7 +205,10 @@ export default function CartModal({ onClose }: CartModalProps) {
             </button>
 
             <button
-              onClick={clearCart}
+              onClick={() => {
+                clearCart();
+                onClose(); // ferme après avoir vidé
+              }}
               className="w-full mt-2 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl"
             >
               Vider le panier
@@ -224,9 +217,12 @@ export default function CartModal({ onClose }: CartModalProps) {
         )}
       </div>
 
-      {/* AUTH MODAL */}
+      {/* AUTH MODAL (ne ferme pas le panier) */}
       {showAuthModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center px-4 z-50">
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center px-4 z-50"
+          // Pas de onClick sur le fond pour éviter fermeture du panier
+        >
           <div className="bg-white dark:bg-gray-900 dark:text-white p-6 rounded-2xl w-full max-w-md text-center">
             <div className="flex justify-center mb-3">
               <div className="w-14 h-14 rounded-full bg-yellow-400 flex items-center justify-center text-white text-2xl font-bold shadow-md">
@@ -239,7 +235,7 @@ export default function CartModal({ onClose }: CartModalProps) {
             </h2>
 
             <p className="text-gray-600 dark:text-gray-300 mt-3">
-              Pour réserver des médicaments, vous devez avoir un compte utilisateur afin de gérer vos réservations.
+              Pour réserver des médicaments, vous devez avoir un compte utilisateur.
             </p>
 
             <div className="mt-5 space-y-3">
