@@ -31,7 +31,6 @@ function ImageModal({
       className="fixed inset-0 z-[99999] bg-black/90"
       onClick={onClose}
     >
-      {/* Bouton fermer — toujours visible */}
       <button
         onClick={onClose}
         className="fixed top-3 right-3 text-white text-2xl font-bold bg-black/50 w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/80 transition z-[100000]"
@@ -39,14 +38,11 @@ function ImageModal({
         ✕
       </button>
 
-      {/* Contenu scrollable */}
       <div className="h-full overflow-y-auto px-4 py-6">
         <div
           className="max-w-xs mx-auto flex flex-col items-center"
           onClick={(e) => e.stopPropagation()}
         >
-
-          {/* Image */}
           <div className="w-full rounded-2xl overflow-hidden shadow-xl bg-black">
             {med?.image_url ? (
               <img
@@ -61,9 +57,7 @@ function ImageModal({
             )}
           </div>
 
-          {/* Infos */}
           <div className="mt-3 w-full bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl">
-
             <h2 className="text-base font-bold text-[#00572D] dark:text-green-400 text-center leading-tight">
               💊 {med?.name || "Médicament"}
             </h2>
@@ -92,7 +86,6 @@ function ImageModal({
               Fermer
             </button>
           </div>
-
         </div>
       </div>
     </div>
@@ -124,9 +117,11 @@ function PopupMedicineCard({
       id: item.id,
       medicine_id: item.medicine_id,
       medicine_name: med?.name || "",
+      medicine_image_url: med?.image_url || "",
       pharmacy_id: pharmacy.id,
       pharmacy_name: pharmacy.name || "",
       price: item.price,
+      quantity: 1,                       // ✅ corrigé
       quantity_available: item.quantity,
     });
   }
@@ -177,13 +172,11 @@ function PopupMedicineCard({
 
         {/* Stock + prix */}
         <div className="flex items-center justify-between gap-2 mt-3">
-          <span
-            className={`text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${
-              outOfStock
-                ? "bg-red-100 text-red-600"
-                : "bg-green-100 text-green-700"
-            }`}
-          >
+          <span className={`text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${
+            outOfStock
+              ? "bg-red-100 text-red-600"
+              : "bg-green-100 text-green-700"
+          }`}>
             📦 {outOfStock ? "Rupture" : `${item.quantity} stock`}
           </span>
 
