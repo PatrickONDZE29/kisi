@@ -16,12 +16,23 @@ export default function Login() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotSent, setForgotSent] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
 
   async function handleLogin() {
-    const { data, error } =
-      await supabase.auth.signInWithPassword({ email, password });
+    if (!email.trim() || !password.trim()) {
+      showToast("Veuillez renseigner votre email et votre mot de passe.", "error");
+      return;
+    }
+
+    setLoginLoading(true);
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
 
     if (error) {
+      setLoginLoading(false);
       showToast(error.message, "error");
       return;
     }
@@ -34,27 +45,41 @@ export default function Login() {
       .eq("id", userId)
       .single();
 
-    if (roleError) {
-      showToast("Impossible de récupérer le rôle utilisateur");
+    if (roleError || !userData) {
+      setLoginLoading(false);
+      showToast("Impossible de récupérer le rôle utilisateur.", "error");
       return;
     }
 
-    if (userData?.role === "pharmacy") {
+    const role = String(userData.role || "").trim().toLowerCase();
+
+    if (role === "admin") {
+      router.push("/dashboard/admin");
+      return;
+    }
+
+    if (role === "pharmacy") {
       router.push("/dashboard/pharmacy");
       return;
     }
 
-    if (userData?.role === "user") {
+    if (role === "driver") {
+      router.push("/dashboard/driver");
+      return;
+    }
+
+    if (role === "user") {
       router.push("/dashboard/user");
       return;
     }
 
-    showToast("Rôle utilisateur introuvable");
+    setLoginLoading(false);
+    showToast("Rôle utilisateur introuvable.", "error");
   }
 
   async function handleForgotPassword() {
     if (!forgotEmail.trim()) {
-      showToast("Veuillez entrer votre adresse email.");
+      showToast("Veuillez entrer votre adresse email.", "error");
       return;
     }
 
@@ -79,11 +104,8 @@ export default function Login() {
 
   return (
     <main className="min-h-screen bg-[#00572D] dark:bg-gray-950 flex items-center justify-center p-6 transition-colors">
-
       <div className="bg-white dark:bg-gray-900 rounded-3xl p-8 w-full max-w-md shadow-2xl transition-colors">
-
         <div className="text-center">
-
           <img
             src="/logo.png"
             alt="KISI"
@@ -97,11 +119,9 @@ export default function Login() {
           <p className="text-gray-600 dark:text-gray-300 mt-2">
             Accédez à votre compte
           </p>
-
         </div>
 
         <div className="space-y-4 mt-8">
-
           <input
             type="email"
             placeholder="Adresse email"
@@ -118,7 +138,6 @@ export default function Login() {
             className="w-full p-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 text-black dark:text-white dark:bg-gray-800 placeholder-gray-500 dark:placeholder:text-gray-500 focus:outline-none focus:border-[#00572D] dark:focus:border-green-500"
           />
 
-          {/* Mot de passe oublié */}
           <div className="text-right">
             <button
               onClick={() => {
@@ -134,13 +153,13 @@ export default function Login() {
 
           <button
             onClick={handleLogin}
-            className="w-full bg-[#00572D] dark:bg-green-700 text-white p-4 rounded-xl font-bold"
+            disabled={loginLoading}
+            className="w-full bg-[#00572D] dark:bg-green-700 text-white p-4 rounded-xl font-bold disabled:opacity-60"
           >
-            Se connecter
+            {loginLoading ? "Connexion..." : "Se connecter"}
           </button>
 
           <div className="text-center pt-2">
-
             <p className="text-gray-600 dark:text-gray-300">
               Pas encore de compte ?
             </p>
@@ -151,19 +170,14 @@ export default function Login() {
             >
               Créer un compte
             </Link>
-
           </div>
-
         </div>
-
       </div>
 
       {/* MODAL MOT DE PASSE OUBLIÉ */}
       {showForgot && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6">
-
           <div className="bg-white dark:bg-gray-900 rounded-3xl p-6 w-full max-w-md shadow-2xl transition-colors">
-
             <div className="text-center mb-6">
               <div className="text-5xl mb-3">🔐</div>
 
@@ -197,7 +211,6 @@ export default function Login() {
               </div>
             ) : (
               <div className="space-y-4">
-
                 <input
                   type="email"
                   placeholder="Votre adresse email"
@@ -220,15 +233,11 @@ export default function Login() {
                 >
                   Annuler
                 </button>
-
               </div>
             )}
-
           </div>
-
         </div>
       )}
-
     </main>
   );
 }

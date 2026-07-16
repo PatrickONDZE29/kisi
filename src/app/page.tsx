@@ -8,7 +8,7 @@ import { motion, cubicBezier } from "framer-motion";
 
 export default function HomePage() {
   const router = useRouter();
-  const [role, setRole] = useState<string | null>(null);
+  const [role, setRole] = useState<"user" | "pharmacy" | "admin" | null>(null);
   const [showPharmacyModal, setShowPharmacyModal] = useState(false);
   const [bgLoaded, setBgLoaded] = useState(false);
 
@@ -19,8 +19,14 @@ export default function HomePage() {
   }, []);
 
   async function loadUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setRole(null);
+      return;
+    }
 
     const { data } = await supabase
       .from("users")
@@ -28,7 +34,11 @@ export default function HomePage() {
       .eq("id", user.id)
       .single();
 
-    if (data) setRole(data.role);
+    if (data?.role) {
+      setRole(data.role as "user" | "pharmacy" | "admin");
+    } else {
+      setRole(null);
+    }
   }
 
   function pharmacyAccess() {
@@ -37,17 +47,17 @@ export default function HomePage() {
 
   const fromLeft = {
     hidden: { opacity: 0, x: -80 },
-    visible: { opacity: 1, x: 0 }
+    visible: { opacity: 1, x: 0 },
   };
 
   const fromRight = {
     hidden: { opacity: 0, x: 80 },
-    visible: { opacity: 1, x: 0 }
+    visible: { opacity: 1, x: 0 },
   };
 
   const fromBottom = {
     hidden: { opacity: 0, y: 80 },
-    visible: { opacity: 1, y: 0 }
+    visible: { opacity: 1, y: 0 },
   };
 
   const float = {
@@ -57,14 +67,13 @@ export default function HomePage() {
     transition: {
       duration: 3.5,
       repeat: Infinity,
-      ease: cubicBezier(0.42, 0, 0.58, 1)
-    }
+      ease: cubicBezier(0.42, 0, 0.58, 1),
+    },
   };
 
   return (
     <main className="min-h-screen relative overflow-hidden text-black dark:text-white transition-colors">
-
-      {/* ========== IMAGE 1 — DROITE VERS CENTRE ========== */}
+      {/* IMAGE 1 — DROITE VERS CENTRE */}
       <div
         className={`absolute top-0 left-0 w-full h-[55%] transition-all duration-[1500ms] ease-out ${
           bgLoaded
@@ -79,7 +88,7 @@ export default function HomePage() {
         />
       </div>
 
-      {/* ========== IMAGE 2 — GAUCHE VERS CENTRE ========== */}
+      {/* IMAGE 2 — GAUCHE VERS CENTRE */}
       <div
         className={`absolute bottom-0 left-0 w-full h-[55%] transition-all duration-[1500ms] ease-out delay-300 ${
           bgLoaded
@@ -94,19 +103,19 @@ export default function HomePage() {
         />
       </div>
 
-      {/* ========== OVERLAY — plus opaque en clair ========== */}
-      <div className="absolute inset-0 bg-white/85 dark:bg-gray-950/85" />
+      {/* OVERLAY */}
+      <div className="absolute inset-0 bg-white/93 dark:bg-gray-950/85" />
 
-      {/* ========== CONTENU ========== */}
       <div className="relative z-10">
-
-        {/* MODAL */}
+        {/* MODAL PHARMACIE */}
         {showPharmacyModal && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 sm:p-6">
             <div className="bg-white dark:bg-gray-900 rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl">
               <div className="text-center">
                 <div className="text-4xl sm:text-5xl mb-2 sm:mb-3">⚠️</div>
-                <h2 className="text-xl sm:text-2xl font-bold text-[#00572D]">Espace Pharmacie</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-[#00572D]">
+                  Espace Pharmacie
+                </h2>
                 <p className="text-gray-600 dark:text-gray-300 text-sm">
                   Cet espace est réservé aux pharmacies.
                 </p>
@@ -172,12 +181,15 @@ export default function HomePage() {
           className="px-4 sm:px-6 mt-4 sm:mt-6"
         >
           <div className="max-w-md mx-auto">
-            <Link href="/search"
+            <Link
+              href="/search"
               className="block bg-[#00572D] text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-lg"
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="font-bold text-lg sm:text-xl">Rechercher un médicament</h2>
+                  <h2 className="font-bold text-lg sm:text-xl">
+                    Rechercher un médicament
+                  </h2>
                   <p className="text-green-100 text-xs sm:text-sm mt-1">
                     Vérifiez instantanément sa disponibilité
                   </p>
@@ -188,7 +200,7 @@ export default function HomePage() {
           </div>
         </motion.section>
 
-        {/* AUTH */}
+        {/* BLOC RÔLE */}
         <motion.section
           initial="hidden"
           whileInView="visible"
@@ -197,16 +209,17 @@ export default function HomePage() {
           className="px-4 sm:px-6 mt-4 sm:mt-6"
         >
           <div className="max-w-md mx-auto space-y-3">
-
             {!role && (
               <>
-                <Link href="/login"
+                <Link
+                  href="/login"
                   className="block bg-[#00572D] text-white text-center p-3 sm:p-4 rounded-xl sm:rounded-2xl font-bold text-sm"
                 >
                   Connexion Pharmacie
                 </Link>
 
-                <Link href="/register?role=pharmacy"
+                <Link
+                  href="/register?role=pharmacy"
                   className="block border-2 border-[#00572D] text-[#00572D] text-center p-3 sm:p-4 rounded-xl sm:rounded-2xl font-bold text-sm"
                 >
                   Inscrire ma pharmacie
@@ -216,13 +229,15 @@ export default function HomePage() {
 
             {role === "user" && (
               <>
-                <Link href="/reservations"
+                <Link
+                  href="/reservations"
                   className="block bg-[#00572D] text-white text-center p-3 sm:p-4 rounded-xl sm:rounded-2xl font-bold text-sm"
                 >
                   Mes réservations
                 </Link>
 
-                <Link href="/dashboard/user"
+                <Link
+                  href="/dashboard/user"
                   className="block border-2 border-[#00572D] text-[#00572D] text-center p-3 sm:p-4 rounded-xl sm:rounded-2xl font-bold text-sm"
                 >
                   Mon compte
@@ -230,6 +245,23 @@ export default function HomePage() {
               </>
             )}
 
+            {role === "pharmacy" && (
+              <Link
+                href="/dashboard/pharmacy"
+                className="block bg-[#00572D] text-white text-center p-3 sm:p-4 rounded-xl sm:rounded-2xl font-bold text-sm shadow-lg"
+              >
+                🏥 Dashboard Pharmacie
+              </Link>
+            )}
+
+            {role === "admin" && (
+              <Link
+                href="/dashboard/admin"
+                className="block bg-[#00572D] text-white text-center p-3 sm:p-4 rounded-xl sm:rounded-2xl font-bold text-sm shadow-lg"
+              >
+                🛠️ Espace Administrateur
+              </Link>
+            )}
           </div>
         </motion.section>
 
@@ -242,13 +274,15 @@ export default function HomePage() {
           className="px-4 sm:px-6 mt-6 sm:mt-8"
         >
           <div className="max-w-md mx-auto space-y-3 sm:space-y-4">
-
-            <Link href="/map"
+            <Link
+              href="/map"
               className="block bg-[#00572D] text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-lg"
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="font-bold text-lg sm:text-xl">Trouver une pharmacie</h2>
+                  <h2 className="font-bold text-lg sm:text-xl">
+                    Trouver une pharmacie
+                  </h2>
                   <p className="text-green-100 text-xs sm:text-sm mt-1">
                     Pharmacies proches de vous
                   </p>
@@ -257,28 +291,17 @@ export default function HomePage() {
               </div>
             </Link>
 
-            {role === "pharmacy" ? (
-              <Link href="/dashboard/pharmacy"
-                className="block bg-[#00572D] text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-lg"
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className="font-bold text-lg sm:text-xl">Espace Pharmacie</h2>
-                    <p className="text-green-100 text-xs sm:text-sm mt-1">
-                      Gestion des stocks et réservations
-                    </p>
-                  </div>
-                  <div className="text-2xl sm:text-3xl">🏥</div>
-                </div>
-              </Link>
-            ) : (
+            {/* Boutons pharmacie visibles seulement pour non-admin */}
+            {role !== "admin" && role !== "pharmacy" && (
               <button
                 onClick={pharmacyAccess}
                 className="w-full bg-[#00572D] text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-lg"
               >
                 <div className="flex justify-between items-center">
                   <div className="text-left">
-                    <h2 className="font-bold text-lg sm:text-xl">Espace Pharmacie</h2>
+                    <h2 className="font-bold text-lg sm:text-xl">
+                      Espace Pharmacie
+                    </h2>
                     <p className="text-green-100 text-xs sm:text-sm mt-1">
                       Gestion des stocks et réservations
                     </p>
@@ -287,7 +310,6 @@ export default function HomePage() {
                 </div>
               </button>
             )}
-
           </div>
         </motion.section>
 
@@ -305,7 +327,9 @@ export default function HomePage() {
               className="block bg-[#00572D] rounded-2xl sm:rounded-3xl p-5 sm:p-6 text-center text-white shadow-lg"
             >
               <div className="text-4xl sm:text-5xl">🏥</div>
-              <h3 className="font-bold text-lg sm:text-xl mt-2 sm:mt-3">Pharmacies de garde</h3>
+              <h3 className="font-bold text-lg sm:text-xl mt-2 sm:mt-3">
+                Pharmacies de garde
+              </h3>
               <p className="text-xs sm:text-sm text-green-100 mt-1">
                 Voir les pharmacies disponibles maintenant
               </p>
@@ -322,7 +346,9 @@ export default function HomePage() {
           className="px-4 sm:px-6 mt-8 sm:mt-10"
         >
           <div className="max-w-md mx-auto bg-[#00572D] rounded-2xl sm:rounded-3xl p-5 sm:p-6 text-white">
-            <h2 className="text-lg sm:text-xl font-bold mb-3 sm:mb-4">Pourquoi utiliser KISI ?</h2>
+            <h2 className="text-lg sm:text-xl font-bold mb-3 sm:mb-4">
+              Pourquoi utiliser KISI ?
+            </h2>
             <ul className="space-y-2 sm:space-y-3 text-xs sm:text-sm">
               <li>✅ Trouver un médicament rapidement</li>
               <li>✅ Localiser la pharmacie la plus proche</li>
@@ -377,7 +403,6 @@ export default function HomePage() {
             </Link>
           </div>
         </motion.footer>
-
       </div>
     </main>
   );
