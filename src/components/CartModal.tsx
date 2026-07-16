@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useCart } from "@/components/CartContext";
 import { useToast } from "@/components/ToastProviderTemp";
-import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
 interface CartModalProps {
@@ -11,96 +10,32 @@ interface CartModalProps {
 }
 
 export default function CartModal({ onClose }: CartModalProps) {
-  const { items, removeItem, clearCart } = useCart();
+  const { items, removeItem, updateQuantity, clearCart, totalAmount } =
+    useCart();
   const { showToast } = useToast();
   const router = useRouter();
-
-  const [confirming, setConfirming] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
 
   const safeItems = items || [];
 
   const byPharmacy = safeItems.reduce((acc: any, item: any) => {
     if (!item?.pharmacy_id) return acc;
-
     if (!acc[item.pharmacy_id]) {
       acc[item.pharmacy_id] = {
         pharmacy_name: item.pharmacy_name,
         items: [],
       };
     }
-
     acc[item.pharmacy_id].items.push(item);
     return acc;
   }, {});
 
-  const total = safeItems.reduce((sum: number, item: any) => {
-    return sum + (item.price || 0);
-  }, 0);
-
-  async function getUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    return user;
-  }
-
-  async function confirmReservations() {
-    const user = await getUser();
-
-    if (!user) {
-      setShowAuthModal(true);
-      return;
-    }
-
-    const { data: userData } = await supabase
-      .from("users")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
-    if (!userData || userData.role !== "user") {
-      showToast("Accès refusé", "error");
-      return;
-    }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name, phone")
-      .eq("id", user.id)
-      .single();
-
-    setConfirming(true);
-
-    let success = 0;
-    let failed = 0;
-
-    for (const item of safeItems) {
-      const { error } = await supabase.from("reservations").insert({
-        user_id: user.id,
-        pharmacy_id: item.pharmacy_id,
-        medicine_id: item.medicine_id,
-        status: "pending",
-        customer_name: profile?.full_name || "",
-        customer_phone: profile?.phone || "",
-      });
-
-      if (error) failed++;
-      else success++;
-    }
-
-    setConfirming(false);
-
-    if (failed === 0) {
-      showToast(`${success} réservation(s) envoyée(s)`);
-      clearCart();
-      onClose(); // ferme le modal après succès
-      router.push("/reservations");
-    } else {
-      showToast(`${success} OK / ${failed} erreurs`, "error");
-    }
+  function handleCheckout() {
+    if (safeItems.length === 0) return;
+    onClose();
+    router.push("/checkout");
   }
 
   return (
-    // ❌ Pas de onClick sur ce div : empêche la fermeture au clic sur l'overlay
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-3 sm:px-6">
       <div className="bg-white dark:bg-gray-900 dark:text-white w-[92%] sm:w-full sm:max-w-lg rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
         {/* HEADER */}
@@ -111,8 +46,6 @@ export default function CartModal({ onClose }: CartModalProps) {
               {safeItems.length} article(s)
             </p>
           </div>
-
-          {/* C'est le SEUL bouton pour fermer le modal */}
           <button
             onClick={onClose}
             className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition"
@@ -126,143 +59,160 @@ export default function CartModal({ onClose }: CartModalProps) {
           {safeItems.length === 0 && (
             <div className="text-center py-10">
               <div className="text-4xl mb-2">🛒</div>
-              <p>Panier vide</p>
+              <p className="text-gray-500">Votre panier est vide</p>
             </div>
           )}
 
           {safeItems.length > 0 && (
             <div className="space-y-4">
-              {Object.entries(byPharmacy).map(([pharmacyId, group]: any) => {
-                const pharmacySubtotal = group.items.reduce(
-                  (sum: number, item: any) => sum + (item.price || 0),
-                  0
-                );
+              {Object.entries(byPharmacy).map(
+                ([pharmacyId, group]: any) => {
+                  const pharmacySubtotal = group.items.reduce(
+                    (sum: number, item: any) =>
+                      sum + item.price * item.quantity,
+                    0
+                  );
 
-                return (
-                  <div
-                    key={pharmacyId}
-                    className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 p-4 shadow-sm"
-                  >
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div>
-                        <p className="font-bold text-[#00572D] dark:text-green-400">
-                          🏥 {group.pharmacy_name}
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {group.items.length} article(s)
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Sous-total</p>
-                        <p className="font-bold text-[#00572D] dark:text-green-400 text-sm">
-                          {pharmacySubtotal.toLocaleString()} FCFA
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      {group.items.map((item: any) => (
-                        <div
-                          key={item.id}
-                          className="flex items-center justify-between gap-3 bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-700"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-medium text-sm">💊 {item.medicine_name}</p>
-                            <p className="font-bold text-[#00572D] dark:text-green-400 text-sm mt-1">
-                              {(item.price || 0).toLocaleString()} FCFA
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => removeItem(item.id)}
-                            className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition shrink-0"
-                          >
-                            🗑
-                          </button>
+                  return (
+                    <div
+                      key={pharmacyId}
+                      className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 p-4 shadow-sm"
+                    >
+                      {/* Header pharmacie */}
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div>
+                          <p className="font-bold text-[#00572D] dark:text-green-400">
+                            🏥 {group.pharmacy_name}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {group.items.length} article(s)
+                          </p>
                         </div>
-                      ))}
+                        <div className="text-right">
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Sous-total
+                          </p>
+                          <p className="font-bold text-[#00572D] dark:text-green-400 text-sm">
+                            {pharmacySubtotal.toLocaleString()} FCFA
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Items */}
+                      <div className="space-y-3">
+                        {group.items.map((item: any) => (
+                          <div
+                            key={item.id}
+                            className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-700"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium text-sm">
+                                  💊 {item.medicine_name}
+                                </p>
+                                <p className="font-bold text-[#00572D] dark:text-green-400 text-sm mt-1">
+                                  {(
+                                    item.price * item.quantity
+                                  ).toLocaleString()}{" "}
+                                  FCFA
+                                </p>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {item.price.toLocaleString()} FCFA / unité
+                                </p>
+                              </div>
+
+                              <button
+                                onClick={() => removeItem(item.id)}
+                                className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition shrink-0"
+                              >
+                                🗑
+                              </button>
+                            </div>
+
+                            {/* Quantité */}
+                            <div className="flex items-center gap-3 mt-3">
+                              <p className="text-xs text-gray-500 dark:text-gray-400">
+                                Quantité :
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() =>
+                                    updateQuantity(
+                                      item.id,
+                                      item.quantity - 1
+                                    )
+                                  }
+                                  disabled={item.quantity <= 1}
+                                  className="w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center font-bold text-sm disabled:opacity-40 hover:bg-gray-300 dark:hover:bg-gray-600 transition"
+                                >
+                                  −
+                                </button>
+                                <span className="w-6 text-center font-bold text-sm">
+                                  {item.quantity}
+                                </span>
+                                <button
+                                  onClick={() =>
+                                    updateQuantity(
+                                      item.id,
+                                      item.quantity + 1
+                                    )
+                                  }
+                                  disabled={
+                                    item.quantity >= item.quantity_available
+                                  }
+                                  className="w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center font-bold text-sm disabled:opacity-40 hover:bg-gray-300 dark:hover:bg-gray-600 transition"
+                                >
+                                  +
+                                </button>
+                              </div>
+                              <p className="text-xs text-gray-400 ml-auto">
+                                Stock : {item.quantity_available}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                }
+              )}
             </div>
           )}
         </div>
 
         {/* FOOTER */}
         {safeItems.length > 0 && (
-          <div className="p-4 border-t dark:border-gray-700">
-            <div className="flex justify-between font-bold">
-              <span>Total</span>
-              <span>{total.toLocaleString()} FCFA</span>
+          <div className="p-4 border-t dark:border-gray-700 space-y-3">
+            <div className="flex justify-between font-bold text-lg">
+              <span>Total médicaments</span>
+              <span className="text-[#00572D] dark:text-green-400">
+                {totalAmount.toLocaleString()} FCFA
+              </span>
             </div>
 
+            <p className="text-xs text-gray-400 text-center">
+              + frais de livraison calculés au checkout
+            </p>
+
             <button
-              onClick={confirmReservations}
-              disabled={confirming}
-              className="w-full mt-3 bg-[#00572D] text-white p-3 rounded-xl"
+              onClick={handleCheckout}
+              className="w-full bg-[#00572D] text-white p-3.5 rounded-xl font-bold text-sm hover:bg-green-800 transition"
             >
-              {confirming ? "En cours..." : "Confirmer la réservation"}
+              💳 Passer au paiement
             </button>
 
             <button
               onClick={() => {
                 clearCart();
-                onClose(); // ferme après avoir vidé
+                onClose();
               }}
-              className="w-full mt-2 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl"
+              className="w-full bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl text-sm font-medium"
             >
               Vider le panier
             </button>
           </div>
         )}
       </div>
-
-      {/* AUTH MODAL (ne ferme pas le panier) */}
-      {showAuthModal && (
-        <div
-          className="fixed inset-0 bg-black/70 flex items-center justify-center px-4 z-50"
-          // Pas de onClick sur le fond pour éviter fermeture du panier
-        >
-          <div className="bg-white dark:bg-gray-900 dark:text-white p-6 rounded-2xl w-full max-w-md text-center">
-            <div className="flex justify-center mb-3">
-              <div className="w-14 h-14 rounded-full bg-yellow-400 flex items-center justify-center text-white text-2xl font-bold shadow-md">
-                !
-              </div>
-            </div>
-
-            <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">
-              Connexion requise
-            </h2>
-
-            <p className="text-gray-600 dark:text-gray-300 mt-3">
-              Pour réserver des médicaments, vous devez avoir un compte utilisateur.
-            </p>
-
-            <div className="mt-5 space-y-3">
-              <button
-                onClick={() => router.push("/login")}
-                className="w-full bg-[#00572D] text-white p-3 rounded-xl"
-              >
-                Connexion
-              </button>
-
-              <button
-                onClick={() => router.push("/register")}
-                className="w-full border border-[#00572D] text-[#00572D] dark:text-green-400 dark:border-green-400 p-3 rounded-xl"
-              >
-                Inscription
-              </button>
-
-              <button
-                onClick={() => setShowAuthModal(false)}
-                className="w-full bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

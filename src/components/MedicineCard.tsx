@@ -30,10 +30,14 @@ export default function MedicineCard({
   onReserve,
   showPharmacy = false,
 }: MedicineCardProps) {
-  const { addItem, removeItem, isInCart, openCart } = useCart();
+  const { addItem, removeItem, isInCart, openCart, updateQuantity, items } =
+    useCart();
   const inCart = isInCart(item.id);
   const outOfStock = (item.quantity ?? 0) <= 0;
   const [showImageModal, setShowImageModal] = useState(false);
+
+  const cartItem = items.find((i) => i.id === item.id);
+  const cartQuantity = cartItem?.quantity || 1;
 
   function handleCart() {
     if (inCart) {
@@ -44,9 +48,11 @@ export default function MedicineCard({
       id: item.id,
       medicine_id: item.medicine_id,
       medicine_name: item.medicines?.name || "",
+      medicine_image_url: item.medicines?.image_url || "",
       pharmacy_id: item.pharmacy_id,
       pharmacy_name: item.pharmacies?.name || "",
       price: item.price,
+      quantity: 1,
       quantity_available: item.quantity,
     });
   }
@@ -61,70 +67,71 @@ export default function MedicineCard({
 
   return (
     <>
-      {/* MODAL PLEIN ÉCRAN IMAGE */}
+      {/* MODAL IMAGE PLEIN ÉCRAN */}
       {showImageModal && (
         <div
-          className="fixed inset-0 z-[99999] bg-black/90 flex flex-col items-center justify-center p-6"
+          className="fixed inset-0 z-[99999] bg-black/90"
           onClick={() => setShowImageModal(false)}
         >
-          {/* Bouton fermer */}
           <button
             onClick={() => setShowImageModal(false)}
-            className="absolute top-5 right-5 text-white text-3xl font-bold bg-black/50 w-10 h-10 rounded-full flex items-center justify-center hover:bg-black/80 transition"
+            className="fixed top-3 right-3 text-white text-2xl font-bold bg-black/50 w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/80 transition z-[100000]"
           >
             ✕
           </button>
 
-          {/* Image grande */}
-          <div
-            className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {item.medicines?.image_url ? (
-              <img
-                src={item.medicines.image_url}
-                alt={item.medicines?.name || "Médicament"}
-                className="w-full object-contain max-h-[60vh]"
-              />
-            ) : (
-              <div className="w-full h-64 bg-gray-800 flex items-center justify-center text-7xl rounded-3xl">
-                💊
-              </div>
-            )}
-          </div>
-
-          {/* Nom + description sous l'image */}
-          <div
-            className="mt-5 w-full max-w-sm bg-white dark:bg-gray-900 rounded-3xl p-5 text-center shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">
-              💊 {item.medicines?.name || "Médicament"}
-            </h2>
-
-            <p className="text-gray-600 dark:text-gray-300 text-sm mt-3 leading-relaxed">
-              {item.medicines?.description || "Aucune description disponible"}
-            </p>
-
-            <div className="flex items-center justify-between mt-4">
-              <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
-                outOfStock
-                  ? "bg-red-100 text-red-600"
-                  : "bg-green-100 text-green-700"
-              }`}>
-                📦 {outOfStock ? "Rupture" : `${item.quantity} en stock`}
-              </span>
-              <span className="font-bold text-[#00572D] dark:text-green-400 text-lg">
-                {(item.price ?? 0).toLocaleString()} FCFA
-              </span>
-            </div>
-
-            <button
-              onClick={() => setShowImageModal(false)}
-              className="mt-4 w-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2.5 rounded-xl font-bold text-sm"
+          <div className="h-full overflow-y-auto px-4 py-6">
+            <div
+              className="max-w-xs mx-auto flex flex-col items-center"
+              onClick={(e) => e.stopPropagation()}
             >
-              Fermer
-            </button>
+              <div className="w-full rounded-2xl overflow-hidden shadow-xl bg-black">
+                {item.medicines?.image_url ? (
+                  <img
+                    src={item.medicines.image_url}
+                    alt={item.medicines?.name || "Médicament"}
+                    className="w-full object-contain max-h-[40vh]"
+                  />
+                ) : (
+                  <div className="w-full h-44 bg-gray-800 flex items-center justify-center text-5xl">
+                    💊
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3 w-full bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl">
+                <h2 className="text-base font-bold text-[#00572D] dark:text-green-400 text-center leading-tight">
+                  💊 {item.medicines?.name || "Médicament"}
+                </h2>
+
+                <p className="text-gray-600 dark:text-gray-300 text-xs mt-2 leading-relaxed whitespace-pre-line">
+                  {item.medicines?.description ||
+                    "Aucune description disponible"}
+                </p>
+
+                <div className="flex items-center justify-between mt-3">
+                  <span
+                    className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                      outOfStock
+                        ? "bg-red-100 text-red-600"
+                        : "bg-green-100 text-green-700"
+                    }`}
+                  >
+                    📦 {outOfStock ? "Rupture" : `${item.quantity} stock`}
+                  </span>
+                  <span className="font-bold text-[#00572D] dark:text-green-400 text-sm">
+                    {(item.price ?? 0).toLocaleString()} FCFA
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => setShowImageModal(false)}
+                  className="mt-3 w-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-bold text-xs"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -132,7 +139,7 @@ export default function MedicineCard({
       {/* CARTE */}
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-md border border-gray-100 dark:border-gray-800 hover:-translate-y-1 hover:shadow-xl transition-all duration-200 pt-14 mt-10 relative">
 
-        {/* IMAGE EN CERCLE — cliquable pour voir en plein écran */}
+        {/* IMAGE EN CERCLE */}
         <div className="absolute -top-10 left-1/2 -translate-x-1/2">
           <div
             onClick={() => setShowImageModal(true)}
@@ -154,7 +161,6 @@ export default function MedicineCard({
         </div>
 
         <div className="p-4">
-
           {/* PHARMACIE */}
           {showPharmacy && item.pharmacies?.name && (
             <div className="flex items-center gap-2 mb-3">
@@ -184,17 +190,46 @@ export default function MedicineCard({
 
           {/* STOCK + PRIX */}
           <div className="flex items-center justify-between mt-3">
-            <span className={`text-sm font-medium px-2 py-1 rounded-full ${
-              outOfStock
-                ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
-                : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-            }`}>
+            <span
+              className={`text-sm font-medium px-2 py-1 rounded-full ${
+                outOfStock
+                  ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
+                  : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+              }`}
+            >
               📦 {outOfStock ? "Rupture" : `${item.quantity} en stock`}
             </span>
             <span className="font-bold text-[#00572D] dark:text-green-400 text-lg">
               {(item.price ?? 0).toLocaleString()} FCFA
             </span>
           </div>
+
+          {/* QUANTITÉ si dans le panier */}
+          {inCart && cartItem && (
+            <div className="flex items-center justify-center gap-4 mt-3 bg-gray-50 dark:bg-gray-800 rounded-xl p-2">
+              <button
+                onClick={() =>
+                  updateQuantity(item.id, cartItem.quantity - 1)
+                }
+                disabled={cartItem.quantity <= 1}
+                className="w-8 h-8 rounded-full bg-white dark:bg-gray-700 shadow flex items-center justify-center font-bold text-lg disabled:opacity-40"
+              >
+                −
+              </button>
+              <span className="font-bold text-[#00572D] dark:text-green-400 text-lg w-6 text-center">
+                {cartItem.quantity}
+              </span>
+              <button
+                onClick={() =>
+                  updateQuantity(item.id, cartItem.quantity + 1)
+                }
+                disabled={cartItem.quantity >= item.quantity}
+                className="w-8 h-8 rounded-full bg-white dark:bg-gray-700 shadow flex items-center justify-center font-bold text-lg disabled:opacity-40"
+              >
+                +
+              </button>
+            </div>
+          )}
 
           {/* ACTIONS */}
           {!outOfStock ? (
@@ -224,7 +259,6 @@ export default function MedicineCard({
               Indisponible
             </div>
           )}
-
         </div>
       </div>
     </>
