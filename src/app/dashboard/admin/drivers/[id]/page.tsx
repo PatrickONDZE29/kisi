@@ -24,9 +24,10 @@ export default function DriverDossierPage({
   const REFUSE_REASONS = [
     "Pièce d'identité illisible",
     "Documents incomplets",
-    "Moto non conforme",
+    "Véhicule non conforme",
     "Informations incohérentes",
     "Photo de mauvaise qualité",
+    "Permis manquant",
     "Demande refusée",
   ];
 
@@ -35,12 +36,51 @@ export default function DriverDossierPage({
   }, [id]);
 
   async function loadDriver() {
-    const { data } = await supabase
+    // ✅ Requête complète avec toutes les colonnes
+    const { data, error } = await supabase
       .from("driver_profiles")
-      .select("*, users(email)")
+      .select(`
+        id,
+        user_id,
+        full_name,
+        phone,
+        city,
+        address,
+        is_verified,
+        is_available,
+        vehicle_type,
+        vehicle_brand,
+        vehicle_model,
+        vehicle_color,
+        vehicle_plate,
+        vehicle_photo_url,
+        vehicle_plate_photo_url,
+        vehicle_doc_url,
+        id_type,
+        id_number,
+        identity_doc_url,
+        identity_doc_back_url,
+        selfie_url,
+        license_url,
+        rejection_reason,
+        dossier_submitted_at,
+        created_at,
+        rating,
+        total_deliveries,
+        total_earnings,
+        users(email)
+      `)
       .eq("id", id)
       .single();
 
+    if (error) {
+      console.error("Erreur chargement dossier:", error);
+      showToast("Erreur : " + error.message, "error");
+      setLoading(false);
+      return;
+    }
+
+    console.log("Dossier chargé:", data);
     setDriver(data);
     setLoading(false);
   }
@@ -51,7 +91,7 @@ export default function DriverDossierPage({
 
     const { error } = await supabase
       .from("driver_profiles")
-      .update({ is_verified: true })
+      .update({ is_verified: true, rejection_reason: null })
       .eq("id", driver.id);
 
     if (error) {
@@ -60,15 +100,14 @@ export default function DriverDossierPage({
       return;
     }
 
-    // Notification au livreur
     await supabase.from("notifications").insert({
       user_id: driver.user_id,
       type: "system",
-      title: "Compte livreur validé ✅",
-      body: "Félicitations ! Votre compte livreur KISI a été validé. Vous pouvez maintenant commencer à recevoir des livraisons.",
+      title: "Dossier validé ✅",
+      body: "Félicitations ! Votre dossier a été validé. Votre compte livreur KISI est maintenant actif. Vous pouvez commencer à recevoir des livraisons.",
     });
 
-    showToast("Livreur validé avec succès ✅");
+    showToast("Livreur validé ✅");
     setProcessing(false);
     router.push("/dashboard/admin");
   }
@@ -83,7 +122,10 @@ export default function DriverDossierPage({
 
     const { error } = await supabase
       .from("driver_profiles")
-      .update({ is_verified: false, rejection_reason: refuseReason })
+      .update({
+        is_verified: false,
+        rejection_reason: refuseReason,
+      })
       .eq("id", driver.id);
 
     if (error) {
@@ -92,12 +134,11 @@ export default function DriverDossierPage({
       return;
     }
 
-    // Notification au livreur
     await supabase.from("notifications").insert({
       user_id: driver.user_id,
       type: "system",
-      title: "Demande livreur refusée ❌",
-      body: `Votre demande de compte livreur KISI a été refusée. Motif : ${refuseReason}. Merci de corriger votre dossier et de soumettre une nouvelle demande.`,
+      title: "Dossier refusé ❌",
+      body: `Votre dossier n'a pas pu être validé. Motif : ${refuseReason}. Merci de corriger votre dossier et de le soumettre à nouveau.`,
     });
 
     showToast("Demande refusée");
@@ -106,11 +147,14 @@ export default function DriverDossierPage({
     router.push("/dashboard/admin");
   }
 
-  function DocImage({ url, label }: { url: string | null; label: string }) {
+  function DocImage({ url, label }: { url: string | null | undefined; label: string }) {
     if (!url) {
       return (
-        <div className="bg-gray-100 dark:bg-gray-800 rounded-xl h-32 flex items-center justify-center text-gray-400 text-xs">
-          Non fourni
+        <div>
+          <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{label}</p>
+          <div className="bg-gray-100 dark:bg-gray-800 rounded-xl h-28 flex items-center justify-center text-gray-400 dark:text-gray-600 text-xs">
+            Non fourni
+          </div>
         </div>
       );
     }
@@ -142,8 +186,13 @@ export default function DriverDossierPage({
     return (
       <main className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
         <div className="text-center">
-          <p className="text-gray-500">Dossier introuvable</p>
-          <button onClick={() => router.push("/dashboard/admin")} className="mt-3 bg-[#00572D] text-white px-5 py-2.5 rounded-xl font-bold text-sm">
+          <div className="text-5xl mb-3">❌</div>
+          <p className="text-gray-500 dark:text-gray-400">Dossier introuvable</p>
+          <p className="text-xs text-gray-400 mt-1">ID: {id}</p>
+          <button
+            onClick={() => router.push("/dashboard/admin")}
+            className="mt-3 bg-[#00572D] text-white px-5 py-2.5 rounded-xl font-bold text-sm"
+          >
             Retour admin
           </button>
         </div>
@@ -159,7 +208,7 @@ export default function DriverDossierPage({
         <div className="flex items-center gap-3 mb-5">
           <button
             onClick={() => router.push("/dashboard/admin")}
-            className="w-9 h-9 rounded-full bg-white dark:bg-gray-800 flex items-center justify-center shadow-sm"
+            className="w-9 h-9 rounded-full bg-white dark:bg-gray-800 flex items-center justify-center shadow-sm font-bold text-gray-600 dark:text-gray-300"
           >
             ←
           </button>
@@ -168,27 +217,49 @@ export default function DriverDossierPage({
               Dossier Livreur
             </h1>
             <p className="text-xs text-gray-400">
-              Soumis le {new Date(driver.created_at).toLocaleDateString("fr-FR")}
+              Soumis le{" "}
+              {driver.dossier_submitted_at
+                ? new Date(driver.dossier_submitted_at).toLocaleDateString("fr-FR", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : new Date(driver.created_at).toLocaleDateString("fr-FR")}
             </p>
           </div>
         </div>
 
-        {/* Statut actuel */}
+        {/* Statut */}
         <div className={`rounded-xl p-3 text-center mb-4 ${
           driver.is_verified
             ? "bg-green-50 dark:bg-green-900/20"
+            : driver.rejection_reason
+            ? "bg-red-50 dark:bg-red-900/20"
             : "bg-yellow-50 dark:bg-yellow-900/20"
         }`}>
           <p className={`text-sm font-bold ${
             driver.is_verified
               ? "text-green-700 dark:text-green-400"
+              : driver.rejection_reason
+              ? "text-red-600 dark:text-red-400"
               : "text-yellow-700 dark:text-yellow-400"
           }`}>
-            {driver.is_verified ? "✅ Compte validé" : "⏳ En attente de validation"}
+            {driver.is_verified
+              ? "✅ Compte validé"
+              : driver.rejection_reason
+              ? "❌ Dossier refusé"
+              : "⏳ En attente de validation"}
           </p>
+          {driver.rejection_reason && (
+            <p className="text-xs text-red-500 dark:text-red-400 mt-1">
+              Motif : {driver.rejection_reason}
+            </p>
+          )}
         </div>
 
-        {/* Infos personnelles */}
+        {/* ========== INFOS PERSONNELLES ========== */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm mb-4">
           <p className="font-bold text-sm mb-3 dark:text-white">👤 Informations personnelles</p>
 
@@ -197,55 +268,58 @@ export default function DriverDossierPage({
               <img src={driver.photo_url} alt="" className="w-14 h-14 rounded-full object-cover border-2 border-[#00572D]" />
             ) : (
               <div className="w-14 h-14 rounded-full bg-[#00572D] flex items-center justify-center text-white text-xl font-bold">
-                {driver.full_name?.charAt(0)}
+                {driver.full_name?.charAt(0) || "?"}
               </div>
             )}
             <div>
-              <p className="font-bold dark:text-white">{driver.full_name}</p>
-              <p className="text-xs text-gray-400">📞 {driver.phone}</p>
-              <p className="text-xs text-gray-400">✉️ {driver.users?.email}</p>
+              <p className="font-bold dark:text-white">{driver.full_name || "—"}</p>
+              <p className="text-xs text-gray-400">📞 {driver.phone || "—"}</p>
+              {driver.users?.email && (
+                <p className="text-xs text-gray-400">✉️ {driver.users.email}</p>
+              )}
             </div>
           </div>
 
           {[
             { label: "Ville", value: driver.city },
             { label: "Adresse", value: driver.address },
-          ].map((row) => row.value && (
+          ].map((row) => (
             <div key={row.label} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
               <span className="text-xs text-gray-500 dark:text-gray-400">{row.label}</span>
-              <span className="text-xs font-medium dark:text-white">{row.value}</span>
+              <span className="text-xs font-medium dark:text-white">{row.value || "—"}</span>
             </div>
           ))}
         </div>
 
-        {/* Pièce d'identité */}
+        {/* ========== PIÈCE D'IDENTITÉ ========== */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm mb-4">
           <p className="font-bold text-sm mb-3 dark:text-white">🪪 Pièce d'identité</p>
 
-          <div className="flex justify-between py-1.5 mb-3">
-            <span className="text-xs text-gray-500 dark:text-gray-400">Type</span>
-            <span className="text-xs font-medium dark:text-white capitalize">
-              {driver.id_type?.replace("_", " ") || "—"}
-            </span>
-          </div>
-
-          <div className="flex justify-between py-1.5 mb-3 border-b border-gray-100 dark:border-gray-800">
-            <span className="text-xs text-gray-500 dark:text-gray-400">Numéro</span>
-            <span className="text-xs font-medium dark:text-white">{driver.id_number || "—"}</span>
-          </div>
+          {[
+            { label: "Type", value: driver.id_type?.replace("_", " ") },
+            { label: "Numéro", value: driver.id_number },
+          ].map((row) => (
+            <div key={row.label} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0 mb-2">
+              <span className="text-xs text-gray-500 dark:text-gray-400">{row.label}</span>
+              <span className="text-xs font-medium dark:text-white capitalize">{row.value || "—"}</span>
+            </div>
+          ))}
 
           <div className="grid grid-cols-1 gap-3 mt-3">
-            <DocImage url={driver.identity_doc_url} label="Recto" />
-            <DocImage url={driver.identity_doc_back_url} label="Verso" />
-            <DocImage url={driver.selfie_url} label="Selfie avec pièce" />
+            <DocImage url={driver.identity_doc_url} label="Pièce d'identité — Recto" />
+            <DocImage url={driver.identity_doc_back_url} label="Pièce d'identité — Verso" />
+            <DocImage url={driver.selfie_url} label="Selfie avec la pièce d'identité" />
           </div>
         </div>
 
-        {/* Moto */}
+        {/* ========== VÉHICULE ========== */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm mb-4">
-          <p className="font-bold text-sm mb-3 dark:text-white">🏍️ Moto</p>
+          <p className="font-bold text-sm mb-3 dark:text-white">
+            {driver.vehicle_type === "moto" ? "🏍️" : "🚗"} Véhicule
+          </p>
 
           {[
+            { label: "Type", value: driver.vehicle_type },
             { label: "Marque", value: driver.vehicle_brand },
             { label: "Modèle", value: driver.vehicle_model },
             { label: "Couleur", value: driver.vehicle_color },
@@ -253,20 +327,21 @@ export default function DriverDossierPage({
           ].map((row) => (
             <div key={row.label} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
               <span className="text-xs text-gray-500 dark:text-gray-400">{row.label}</span>
-              <span className="text-xs font-medium dark:text-white">{row.value || "—"}</span>
+              <span className="text-xs font-medium dark:text-white capitalize">{row.value || "—"}</span>
             </div>
           ))}
 
           <div className="grid grid-cols-1 gap-3 mt-4">
-            <DocImage url={driver.vehicle_photo_url} label="Photo de la moto" />
+            <DocImage url={driver.vehicle_photo_url} label="Photo du véhicule" />
             <DocImage url={driver.vehicle_plate_photo_url} label="Plaque d'immatriculation" />
-            <DocImage url={driver.vehicle_doc_url} label="Carte grise / Permis / Assurance" />
+            <DocImage url={driver.license_url} label="Permis de conduire" />
+            <DocImage url={driver.vehicle_doc_url} label="Carte grise / Assurance" />
           </div>
         </div>
 
-        {/* ACTIONS ADMIN */}
+        {/* ========== ACTIONS ========== */}
         {!driver.is_verified && (
-          <div className="space-y-3 mt-4">
+          <div className="space-y-3 mt-2">
             <button
               onClick={approveDriver}
               disabled={processing}
@@ -286,15 +361,24 @@ export default function DriverDossierPage({
         )}
 
         {driver.is_verified && (
-          <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-4 text-center">
-            <p className="text-green-700 dark:text-green-400 font-bold text-sm">
-              ✅ Ce livreur est déjà validé
-            </p>
+          <div className="space-y-3 mt-2">
+            <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-4 text-center">
+              <p className="text-green-700 dark:text-green-400 font-bold text-sm">
+                ✅ Ce livreur est déjà validé
+              </p>
+            </div>
+            <button
+              onClick={() => setShowRefuseModal(true)}
+              disabled={processing}
+              className="w-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-3 rounded-xl font-bold text-sm disabled:opacity-50 transition"
+            >
+              Révoquer la validation
+            </button>
           </div>
         )}
       </div>
 
-      {/* ZOOM IMAGE */}
+      {/* ========== ZOOM IMAGE ========== */}
       {zoomedImage && (
         <div
           className="fixed inset-0 bg-black/90 z-[99999] flex items-center justify-center p-4"
@@ -303,19 +387,19 @@ export default function DriverDossierPage({
           <img
             src={zoomedImage}
             alt="Zoom"
-            className="max-w-full max-h-[90vh] rounded-2xl object-contain"
+            className="max-w-full max-h-[90vh] rounded-2xl object-contain shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
           <button
             onClick={() => setZoomedImage(null)}
-            className="absolute top-4 right-4 text-white text-2xl bg-black/50 w-10 h-10 rounded-full flex items-center justify-center"
+            className="absolute top-4 right-4 text-white text-2xl bg-black/50 w-10 h-10 rounded-full flex items-center justify-center hover:bg-black/80 transition"
           >
             ✕
           </button>
         </div>
       )}
 
-      {/* MODAL REFUS */}
+      {/* ========== MODAL REFUS ========== */}
       {showRefuseModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-900 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
@@ -344,7 +428,7 @@ export default function DriverDossierPage({
 
             <div>
               <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                Ou saisissez un motif personnalisé
+                Motif personnalisé
               </label>
               <textarea
                 value={refuseReason}
@@ -367,7 +451,7 @@ export default function DriverDossierPage({
                 disabled={processing || !refuseReason.trim()}
                 className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold text-sm disabled:opacity-50"
               >
-                {processing ? "..." : "Refuser"}
+                {processing ? "..." : "Confirmer le refus"}
               </button>
             </div>
           </div>

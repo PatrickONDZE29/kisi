@@ -44,59 +44,92 @@ export default function DriverDossierPage() {
   // Previews
   const [previews, setPreviews] = useState<Record<string, string>>({});
 
+  // Upload progress
+  const [uploadStatus, setUploadStatus] = useState("");
+
   useEffect(() => {
     checkUser();
   }, []);
 
   async function checkUser() {
-    const { data: { user } } = await supabase.auth.getUser();
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
 
-    if (!user) {
-      router.push("/login");
-      return;
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      setUserId(user.id);
+
+      // Vérifier le rôle
+      const { data: userData } = await supabase
+        .from("users")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      if (!userData || userData.role !== "driver") {
+        router.push("/");
+        return;
+      }
+
+      // Récupérer ou créer le profil livreur
+      let { data: driver } = await supabase
+        .from("driver_profiles")
+        .select("*")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      // ✅ Si le profil n'existe pas encore, le créer
+      if (!driver) {
+        const { data: newDriver, error: createError } = await supabase
+          .from("driver_profiles")
+          .insert({
+            user_id: user.id,
+            full_name: "",
+            phone: "",
+            is_verified: false,
+            is_available: false,
+          })
+          .select()
+          .single();
+
+        if (createError) {
+          showToast("Erreur : " + createError.message, "error");
+          setLoading(false);
+          return;
+        }
+
+        driver = newDriver;
+      }
+
+      if (driver) {
+        setDriverProfileId(driver.id);
+        setFullName(driver.full_name || "");
+        setPhone(driver.phone || "");
+        setCity(driver.city || "");
+        setAddress(driver.address || "");
+        if (driver.vehicle_type) setVehicleType(driver.vehicle_type);
+        setVehicleBrand(driver.vehicle_brand || "");
+        setVehicleModel(driver.vehicle_model || "");
+        setVehicleColor(driver.vehicle_color || "");
+        setVehiclePlate(driver.vehicle_plate || "");
+        if (driver.id_type) setIdType(driver.id_type);
+        setIdNumber(driver.id_number || "");
+      }
+    } catch (err: any) {
+      showToast("Erreur de chargement : " + err.message, "error");
+    } finally {
+      setLoading(false);
     }
-
-    setUserId(user.id);
-
-    // Vérifier le rôle
-    const { data: userData } = await supabase
-      .from("users")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
-    if (!userData || userData.role !== "driver") {
-      router.push("/");
-      return;
-    }
-
-    // Récupérer profil livreur existant
-    const { data: driver } = await supabase
-      .from("driver_profiles")
-      .select("*")
-      .eq("user_id", user.id)
-      .single();
-
-    if (driver) {
-      setDriverProfileId(driver.id);
-      setFullName(driver.full_name || "");
-      setPhone(driver.phone || "");
-      setCity(driver.city || "");
-      setAddress(driver.address || "");
-
-      if (driver.vehicle_type) setVehicleType(driver.vehicle_type);
-      setVehicleBrand(driver.vehicle_brand || "");
-      setVehicleModel(driver.vehicle_model || "");
-      setVehicleColor(driver.vehicle_color || "");
-      setVehiclePlate(driver.vehicle_plate || "");
-      if (driver.id_type) setIdType(driver.id_type);
-      setIdNumber(driver.id_number || "");
-    }
-
-    setLoading(false);
   }
 
-  function handleFile(key: string, file: File | null, setter: (f: File | null) => void) {
+  function handleFile(
+    key: string,
+    file: File | null,
+    setter: (f: File | null) => void
+  ) {
     setter(file);
     if (file) {
       const url = URL.createObjectURL(file);
@@ -104,24 +137,86 @@ export default function DriverDossierPage() {
     }
   }
 
+  // ✅ Upload robuste avec vérification
   async function uploadFile(file: File, path: string): Promise<string | null> {
-    const { error } = await supabase.storage
-      .from("driver-documents")
-      .upload(path, file, { upsert: true });
+    try {
+      setUploadStatus(`Upload : ${path.split("/").pop()}...`);
 
-    if (error) {
-      showToast("Erreur upload : " + error.message, "error");
+      const { data, error } = await supabase.storage
+        .from("driver-documents")
+        .upload(path, file, {
+          upsert: true,
+          contentType: file.type,
+        });
+
+      if (error) {
+        console.error("Upload error:", error);
+        showToast(`Erreur upload ${path} : ${error.message}`, "error");
+        return null;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from("driver-documents")
+        .getPublicUrl(path);
+
+      if (!urlData?.publicUrl) {
+        showToast(`Impossible d'obtenir l'URL pour ${path}`, "error");
+        return null;
+      }
+
+      return urlData.publicUrl;
+    } catch (err: any) {
+      showToast(`Erreur upload : ${err.message}`, "error");
       return null;
     }
-
-    const { data } = supabase.storage.from("driver-documents").getPublicUrl(path);
-    return data.publicUrl;
   }
 
   async function handleSubmit() {
-    if (!userId || !driverProfileId) return;
+    if (!userId) {
+      showToast("Session expirée. Reconnectez-vous.", "error");
+      router.push("/login");
+      return;
+    }
+
+    // ✅ Re-vérifier que le profil existe et récupérer son ID
+    let currentProfileId = driverProfileId;
+
+    if (!currentProfileId) {
+      const { data: driver } = await supabase
+        .from("driver_profiles")
+        .select("id")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (!driver) {
+        showToast("Profil livreur introuvable. Recréation...", "error");
+        const { data: newDriver, error } = await supabase
+          .from("driver_profiles")
+          .insert({
+            user_id: userId,
+            full_name: fullName,
+            phone,
+            is_verified: false,
+            is_available: false,
+          })
+          .select()
+          .single();
+
+        if (error || !newDriver) {
+          showToast("Impossible de créer le profil", "error");
+          return;
+        }
+        currentProfileId = newDriver.id;
+        setDriverProfileId(newDriver.id);
+      } else {
+        currentProfileId = driver.id;
+        setDriverProfileId(driver.id);
+      }
+    }
 
     // Validations
+    if (!fullName.trim()) { showToast("Nom complet requis", "error"); return; }
+    if (!phone.trim()) { showToast("Téléphone requis", "error"); return; }
     if (!city.trim()) { showToast("Ville requise", "error"); return; }
     if (!vehicleBrand.trim()) { showToast("Marque du véhicule requise", "error"); return; }
     if (!vehiclePlate.trim()) { showToast("Immatriculation requise", "error"); return; }
@@ -133,30 +228,74 @@ export default function DriverDossierPage() {
     if (!selfieFile) { showToast("Selfie avec pièce requis", "error"); return; }
 
     setSubmitting(true);
+    setUploadStatus("Démarrage des uploads...");
 
     try {
       const ts = Date.now();
       const base = `${userId}/${ts}`;
 
-      const [
-        vehiclePhotoUrl,
-        vehiclePlatePhotoUrl,
-        idFrontUrl,
-        idBackUrl,
-        selfieUrl,
-        licenseUrl,
-        vehicleDocUrl,
-      ] = await Promise.all([
-        vehiclePhotoFile ? uploadFile(vehiclePhotoFile, `${base}/vehicle.jpg`) : Promise.resolve(null),
-        vehiclePlatePhotoFile ? uploadFile(vehiclePlatePhotoFile, `${base}/plate.jpg`) : Promise.resolve(null),
-        idFrontFile ? uploadFile(idFrontFile, `${base}/id_front.jpg`) : Promise.resolve(null),
-        idBackFile ? uploadFile(idBackFile, `${base}/id_back.jpg`) : Promise.resolve(null),
-        selfieFile ? uploadFile(selfieFile, `${base}/selfie.jpg`) : Promise.resolve(null),
-        licenseFile ? uploadFile(licenseFile, `${base}/license.jpg`) : Promise.resolve(null),
-        vehicleDocFile ? uploadFile(vehicleDocFile, `${base}/vehicle_doc.jpg`) : Promise.resolve(null),
-      ]);
+      // ✅ Upload séquentiels pour mieux détecter les erreurs
+      setUploadStatus("Upload photo véhicule...");
+      const vehiclePhotoUrl = vehiclePhotoFile
+        ? await uploadFile(vehiclePhotoFile, `${base}/vehicle.jpg`)
+        : null;
 
-      const { error } = await supabase
+      setUploadStatus("Upload photo plaque...");
+      const vehiclePlatePhotoUrl = vehiclePlatePhotoFile
+        ? await uploadFile(vehiclePlatePhotoFile, `${base}/plate.jpg`)
+        : null;
+
+      setUploadStatus("Upload pièce recto...");
+      const idFrontUrl = idFrontFile
+        ? await uploadFile(idFrontFile, `${base}/id_front.jpg`)
+        : null;
+
+      setUploadStatus("Upload pièce verso...");
+      const idBackUrl = idBackFile
+        ? await uploadFile(idBackFile, `${base}/id_back.jpg`)
+        : null;
+
+      setUploadStatus("Upload selfie...");
+      const selfieUrl = selfieFile
+        ? await uploadFile(selfieFile, `${base}/selfie.jpg`)
+        : null;
+
+      setUploadStatus("Upload permis...");
+      const licenseUrl = licenseFile
+        ? await uploadFile(licenseFile, `${base}/license.jpg`)
+        : null;
+
+      setUploadStatus("Upload carte grise...");
+      const vehicleDocUrl = vehicleDocFile
+        ? await uploadFile(vehicleDocFile, `${base}/vehicle_doc.jpg`)
+        : null;
+
+      setUploadStatus("Enregistrement en base...");
+
+      // ✅ Log pour déboguer
+      console.log("Saving to driver_profiles:", {
+        id: currentProfileId,
+        full_name: fullName,
+        phone,
+        city,
+        address,
+        vehicle_type: vehicleType,
+        vehicle_brand: vehicleBrand,
+        vehicle_model: vehicleModel,
+        vehicle_color: vehicleColor,
+        vehicle_plate: vehiclePlate,
+        vehicle_photo_url: vehiclePhotoUrl,
+        vehicle_plate_photo_url: vehiclePlatePhotoUrl,
+        id_type: idType,
+        id_number: idNumber,
+        identity_doc_url: idFrontUrl,
+        identity_doc_back_url: idBackUrl,
+        selfie_url: selfieUrl,
+        license_url: licenseUrl,
+        vehicle_doc_url: vehicleDocUrl,
+      });
+
+      const { error: updateError } = await supabase
         .from("driver_profiles")
         .update({
           full_name: fullName,
@@ -179,9 +318,23 @@ export default function DriverDossierPage() {
           vehicle_doc_url: vehicleDocUrl,
           dossier_submitted_at: new Date().toISOString(),
         })
-        .eq("id", driverProfileId);
+        .eq("id", currentProfileId);
 
-      if (error) throw new Error(error.message);
+      if (updateError) {
+        console.error("Update error:", updateError);
+        throw new Error(`Erreur base de données : ${updateError.message}`);
+      }
+
+      // ✅ Vérification que la mise à jour a bien fonctionné
+      const { data: verif } = await supabase
+        .from("driver_profiles")
+        .select("id, full_name, identity_doc_url, vehicle_photo_url")
+        .eq("id", currentProfileId)
+        .single();
+
+      console.log("Verification après update:", verif);
+
+      setUploadStatus("Notification admin...");
 
       // Notifier les admins
       const { data: admins } = await supabase
@@ -200,10 +353,13 @@ export default function DriverDossierPage() {
         );
       }
 
-      showToast("Dossier envoyé ! En attente de validation.");
+      setUploadStatus("");
+      showToast("✅ Dossier envoyé avec succès !");
       router.push("/dashboard/driver");
     } catch (err: any) {
+      console.error("Submit error:", err);
       showToast(err.message || "Erreur lors de l'envoi", "error");
+      setUploadStatus("");
     } finally {
       setSubmitting(false);
     }
@@ -232,7 +388,6 @@ export default function DriverDossierPage() {
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
             Étape {step} sur 3
           </p>
-
           <div className="flex gap-2 mt-3">
             {[1, 2, 3].map((s) => (
               <div
@@ -248,6 +403,7 @@ export default function DriverDossierPage() {
         {/* ========== ÉTAPE 1 — INFOS PERSONNELLES + VÉHICULE ========== */}
         {step === 1 && (
           <div className="space-y-4">
+            {/* Infos personnelles */}
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm space-y-4">
               <h2 className="font-bold text-sm dark:text-white">👤 Informations personnelles</h2>
 
@@ -269,6 +425,7 @@ export default function DriverDossierPage() {
               ))}
             </div>
 
+            {/* Véhicule */}
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm space-y-4">
               <h2 className="font-bold text-sm dark:text-white">🏍️ Moyen de transport</h2>
 
@@ -308,7 +465,6 @@ export default function DriverDossierPage() {
                 </div>
               ))}
 
-              {/* Photo véhicule */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">
                   Photo du {vehicleType === "moto" ? "moto" : "véhicule"} *
@@ -324,7 +480,6 @@ export default function DriverDossierPage() {
                 )}
               </div>
 
-              {/* Photo plaque */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">Photo de la plaque *</label>
                 <input
@@ -341,10 +496,22 @@ export default function DriverDossierPage() {
 
             <button
               onClick={() => {
-                if (!fullName || !phone || !city) { showToast("Remplissez les infos personnelles", "error"); return; }
-                if (!vehicleBrand || !vehiclePlate) { showToast("Remplissez les infos du véhicule", "error"); return; }
-                if (!vehiclePhotoFile) { showToast("Photo du véhicule requise", "error"); return; }
-                if (!vehiclePlatePhotoFile) { showToast("Photo de la plaque requise", "error"); return; }
+                if (!fullName || !phone || !city) {
+                  showToast("Remplissez toutes les infos personnelles", "error");
+                  return;
+                }
+                if (!vehicleBrand || !vehiclePlate) {
+                  showToast("Remplissez les infos du véhicule", "error");
+                  return;
+                }
+                if (!vehiclePhotoFile) {
+                  showToast("Photo du véhicule requise", "error");
+                  return;
+                }
+                if (!vehiclePlatePhotoFile) {
+                  showToast("Photo de la plaque requise", "error");
+                  return;
+                }
                 setStep(2);
               }}
               className="w-full bg-[#00572D] text-white p-3 rounded-xl font-bold text-sm"
@@ -360,7 +527,6 @@ export default function DriverDossierPage() {
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm space-y-4">
               <h2 className="font-bold text-sm dark:text-white">🪪 Pièce d'identité</h2>
 
-              {/* Type */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">Type *</label>
                 <div className="grid grid-cols-3 gap-2 mt-1">
@@ -384,7 +550,6 @@ export default function DriverDossierPage() {
                 </div>
               </div>
 
-              {/* Numéro */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">Numéro *</label>
                 <input
@@ -395,7 +560,6 @@ export default function DriverDossierPage() {
                 />
               </div>
 
-              {/* Recto */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">Photo recto *</label>
                 <input
@@ -409,7 +573,6 @@ export default function DriverDossierPage() {
                 )}
               </div>
 
-              {/* Verso */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">Photo verso *</label>
                 <input
@@ -423,7 +586,6 @@ export default function DriverDossierPage() {
                 )}
               </div>
 
-              {/* Selfie */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">
                   Selfie avec la pièce *
@@ -444,7 +606,12 @@ export default function DriverDossierPage() {
             </div>
 
             <div className="flex gap-3">
-              <button onClick={() => setStep(1)} className="flex-1 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm">← Retour</button>
+              <button
+                onClick={() => setStep(1)}
+                className="flex-1 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm"
+              >
+                ← Retour
+              </button>
               <button
                 onClick={() => {
                   if (!idNumber) { showToast("Numéro de pièce requis", "error"); return; }
@@ -467,7 +634,6 @@ export default function DriverDossierPage() {
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm space-y-4">
               <h2 className="font-bold text-sm dark:text-white">📄 Documents du véhicule</h2>
 
-              {/* Permis */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">
                   Permis de conduire *
@@ -483,7 +649,6 @@ export default function DriverDossierPage() {
                 )}
               </div>
 
-              {/* Carte grise / assurance */}
               <div>
                 <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">
                   Carte grise / Assurance (facultatif)
@@ -495,38 +660,63 @@ export default function DriverDossierPage() {
                   className="w-full mt-1 p-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs dark:text-white"
                 />
                 {previews.vehicleDoc && (
-                  <img src={previews.vehicleDoc} alt="Document véhicule" className="w-full h-32 object-cover rounded-xl mt-2 border border-gray-200" />
+                  <img src={previews.vehicleDoc} alt="Document" className="w-full h-32 object-cover rounded-xl mt-2 border border-gray-200" />
                 )}
               </div>
 
               {/* Récapitulatif */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1.5">
                 <p className="text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">📋 Récapitulatif</p>
                 {[
                   { label: "Nom", value: fullName },
                   { label: "Téléphone", value: phone },
                   { label: "Ville", value: city },
-                  { label: "Véhicule", value: `${vehicleType} ${vehicleBrand} ${vehicleModel}` },
+                  { label: "Véhicule", value: `${vehicleType} · ${vehicleBrand} ${vehicleModel}` },
                   { label: "Plaque", value: vehiclePlate },
-                  { label: "Pièce", value: `${idType.replace("_", " ")} – ${idNumber}` },
+                  { label: "Couleur", value: vehicleColor },
+                  { label: "Pièce", value: `${idType.replace("_", " ")} · ${idNumber}` },
+                  { label: "Photo véhicule", value: vehiclePhotoFile ? "✅" : "❌" },
+                  { label: "Photo plaque", value: vehiclePlatePhotoFile ? "✅" : "❌" },
+                  { label: "Pièce recto", value: idFrontFile ? "✅" : "❌" },
+                  { label: "Pièce verso", value: idBackFile ? "✅" : "❌" },
+                  { label: "Selfie", value: selfieFile ? "✅" : "❌" },
+                  { label: "Permis", value: licenseFile ? "✅" : "❌ (requis)" },
                 ].map((row) => (
                   <div key={row.label} className="flex justify-between">
                     <span className="text-xs text-gray-500 dark:text-gray-400">{row.label}</span>
-                    <span className="text-xs font-medium dark:text-white truncate ml-2 max-w-[60%] text-right">{row.value}</span>
+                    <span className="text-xs font-medium dark:text-white truncate ml-2 max-w-[60%] text-right">
+                      {row.value || "—"}
+                    </span>
                   </div>
                 ))}
               </div>
 
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3">
                 <p className="text-xs text-blue-700 dark:text-blue-400">
-                  ℹ️ Votre dossier sera examiné par l'équipe KISI sous 24-48h.
-                  Vous recevrez une notification dès que votre compte sera validé.
+                  ℹ️ Votre dossier sera examiné sous 24-48h.
+                  Vous serez notifié dès validation.
                 </p>
               </div>
+
+              {/* Statut upload en cours */}
+              {submitting && uploadStatus && (
+                <div className="bg-[#00572D]/10 rounded-xl p-3 text-center">
+                  <div className="w-6 h-6 border-2 border-[#00572D] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  <p className="text-xs text-[#00572D] dark:text-green-400 font-medium">
+                    {uploadStatus}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3">
-              <button onClick={() => setStep(2)} className="flex-1 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm">← Retour</button>
+              <button
+                onClick={() => setStep(2)}
+                disabled={submitting}
+                className="flex-1 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm disabled:opacity-50"
+              >
+                ← Retour
+              </button>
               <button
                 onClick={handleSubmit}
                 disabled={submitting}
@@ -544,7 +734,8 @@ export default function DriverDossierPage() {
             await supabase.auth.signOut();
             router.push("/");
           }}
-          className="w-full mt-4 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm"
+          disabled={submitting}
+          className="w-full mt-4 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm disabled:opacity-50"
         >
           🚪 Se déconnecter
         </button>
