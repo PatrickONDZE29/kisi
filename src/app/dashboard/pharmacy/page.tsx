@@ -10,8 +10,6 @@ export default function PharmacyDashboard() {
   const [loading, setLoading] = useState(true);
   const [authorized, setAuthorized] = useState(false);
   const [pharmacy, setPharmacy] = useState<any>(null);
-
-  // Compteurs temps réel
   const [newOrdersCount, setNewOrdersCount] = useState(0);
   const [newReservationsCount, setNewReservationsCount] = useState(0);
 
@@ -43,22 +41,30 @@ export default function PharmacyDashboard() {
       setPharmacy(pharmacyData);
       await loadCounts(pharmacyData.id);
 
-      // Écouter les nouvelles commandes/réservations en temps réel
+      // ✅ Configurer TOUS les .on() AVANT .subscribe()
       supabase
         .channel("pharmacy-dashboard-realtime")
-        .on("postgres_changes", {
-          event: "*",
-          schema: "public",
-          table: "orders",
-          filter: `pharmacy_id=eq.${pharmacyData.id}`,
-        }, () => loadCounts(pharmacyData.id))
-        .on("postgres_changes", {
-          event: "*",
-          schema: "public",
-          table: "reservations",
-          filter: `pharmacy_id=eq.${pharmacyData.id}`,
-        }, () => loadCounts(pharmacyData.id))
-        .subscribe();
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "orders",
+            filter: `pharmacy_id=eq.${pharmacyData.id}`,
+          },
+          () => loadCounts(pharmacyData.id)
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "reservations",
+            filter: `pharmacy_id=eq.${pharmacyData.id}`,
+          },
+          () => loadCounts(pharmacyData.id)
+        )
+        .subscribe(); // ✅ subscribe() en dernier
     }
 
     setLoading(false);
