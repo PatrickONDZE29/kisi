@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
@@ -13,8 +13,19 @@ export default function PharmacyDashboard() {
   const [newOrdersCount, setNewOrdersCount] = useState(0);
   const [newReservationsCount, setNewReservationsCount] = useState(0);
 
+  // ✅ Référence pour éviter de recréer le canal plusieurs fois
+  const channelRef = useRef<any>(null);
+
   useEffect(() => {
     checkAccess();
+
+    // ✅ Nettoyage au démontage
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
   }, []);
 
   async function checkAccess() {
@@ -41,9 +52,15 @@ export default function PharmacyDashboard() {
       setPharmacy(pharmacyData);
       await loadCounts(pharmacyData.id);
 
-      // ✅ Configurer TOUS les .on() AVANT .subscribe()
-      supabase
-        .channel("pharmacy-dashboard-realtime")
+      // ✅ Supprimer le canal existant avant d'en créer un nouveau
+      if (channelRef.current) {
+        await supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+
+      // ✅ Créer le canal avec un nom unique basé sur l'ID pharmacie
+      const channel = supabase
+        .channel(`pharmacy-dashboard-${pharmacyData.id}`)
         .on(
           "postgres_changes",
           {
@@ -64,7 +81,9 @@ export default function PharmacyDashboard() {
           },
           () => loadCounts(pharmacyData.id)
         )
-        .subscribe(); // ✅ subscribe() en dernier
+        .subscribe();
+
+      channelRef.current = channel;
     }
 
     setLoading(false);
@@ -88,6 +107,10 @@ export default function PharmacyDashboard() {
   }
 
   async function handleLogout() {
+    if (channelRef.current) {
+      await supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
     await supabase.auth.signOut();
     router.push("/");
   }
@@ -137,8 +160,12 @@ export default function PharmacyDashboard() {
                 />
               )}
               <div>
-                <h1 className="text-lg font-bold">{pharmacy?.name || "Espace Pharmacie"}</h1>
-                <p className="text-green-100 text-xs">📍 {pharmacy?.city || "Ville non renseignée"}</p>
+                <h1 className="text-lg font-bold">
+                  {pharmacy?.name || "Espace Pharmacie"}
+                </h1>
+                <p className="text-green-100 text-xs">
+                  📍 {pharmacy?.city || "Ville non renseignée"}
+                </p>
                 <p className={`text-xs font-bold mt-0.5 ${pharmacy?.is_open ? "text-green-300" : "text-red-300"}`}>
                   {pharmacy?.is_open ? "🟢 Ouverte" : "🔴 Fermée"}
                 </p>

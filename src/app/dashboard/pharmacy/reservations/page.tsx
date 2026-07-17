@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/ToastProviderTemp";
 
-// =====================================================
-// CONFIG STATUTS
-// =====================================================
 const STATUS_CONFIG: Record<string, {
   label: string;
   emoji: string;
@@ -79,19 +76,18 @@ function getNextActions(status: string): {
   }
 }
 
-// =====================================================
-// PAGE PRINCIPALE
-// =====================================================
 export default function PharmacyReservationsPage() {
   const { showToast } = useToast();
+
   const [loading, setLoading] = useState(true);
   const [reservations, setReservations] = useState<any[]>([]);
   const [pharmacy, setPharmacy] = useState<any>(null);
-  const [selectedReservation, setSelectedReservation] = useState<any | null>(null);
   const [updating, setUpdating] = useState(false);
   const [tab, setTab] = useState<"active" | "history">("active");
 
-  // Compteurs
+  // ✅ Référence canal Realtime
+  const channelRef = useRef<any>(null);
+
   const newCount = reservations.filter((r) => r.status === "pending").length;
   const preparingCount = reservations.filter((r) => r.status === "accepted").length;
   const readyCount = reservations.filter((r) => r.status === "ready").length;
@@ -100,6 +96,14 @@ export default function PharmacyReservationsPage() {
 
   useEffect(() => {
     loadData();
+
+    // ✅ Nettoyage au démontage
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
   }, []);
 
   async function loadData() {
@@ -130,16 +134,35 @@ export default function PharmacyReservationsPage() {
     setReservations(data || []);
     setLoading(false);
 
-    // Temps réel
-    supabase
-      .channel("pharmacy-reservations-realtime")
-      .on("postgres_changes", {
-        event: "*",
-        schema: "public",
-        table: "reservations",
-        filter: `pharmacy_id=eq.${pharmacyData.id}`,
-      }, () => loadData())
+    // ✅ Supprimer l'ancien canal avant d'en créer un nouveau
+    if (channelRef.current) {
+      await supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+
+    // ✅ Créer le canal avec tous les .on() AVANT .subscribe()
+    const channel = supabase
+      .channel(`pharmacy-reservations-${pharmacyData.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "reservations",
+          filter: `pharmacy_id=eq.${pharmacyData.id}`,
+        },
+        async () => {
+          const { data: updated } = await supabase
+            .from("reservations")
+            .select(`*, medicines(id, name, description, image_url)`)
+            .eq("pharmacy_id", pharmacyData.id)
+            .order("created_at", { ascending: false });
+          setReservations(updated || []);
+        }
+      )
       .subscribe();
+
+    channelRef.current = channel;
   }
 
   async function updateStatus(reservationId: string, newStatus: string) {
@@ -176,10 +199,9 @@ export default function PharmacyReservationsPage() {
     }
 
     // Notification client
-    if (reservation) {
+    if (reservation?.user_id) {
       let title = "";
       let body = "";
-      const cfg = getStatusConfig(newStatus);
 
       switch (newStatus) {
         case "accepted":
@@ -200,7 +222,7 @@ export default function PharmacyReservationsPage() {
           break;
       }
 
-      if (title && reservation.user_id) {
+      if (title) {
         await supabase.from("notifications").insert({
           user_id: reservation.user_id,
           type: "order_update",
@@ -212,13 +234,13 @@ export default function PharmacyReservationsPage() {
 
     const cfg = getStatusConfig(newStatus);
     showToast(`Statut mis à jour : ${cfg.label}`);
-    await loadData();
 
-    // Mettre à jour la réservation sélectionnée si ouverte
-    if (selectedReservation?.id === reservationId) {
-      const updated = reservations.find((r) => r.id === reservationId);
-      if (updated) setSelectedReservation({ ...updated, status: newStatus });
-    }
+    // Mettre à jour localement sans recharger tout
+    setReservations((prev) =>
+      prev.map((r) =>
+        r.id === reservationId ? { ...r, status: newStatus } : r
+      )
+    );
 
     setUpdating(false);
   }
@@ -229,7 +251,6 @@ export default function PharmacyReservationsPage() {
   const historyReservations = reservations.filter(
     (r) => ["delivered", "rejected"].includes(r.status)
   );
-
   const displayedReservations = tab === "active" ? activeReservations : historyReservations;
 
   if (loading) {
