@@ -35,19 +35,22 @@ export default function DriverDashboard() {
   const [history, setHistory] = useState<any[]>([]);
   const [updating, setUpdating] = useState(false);
   const [watchId, setWatchId] = useState<number | null>(null);
+  const [loadingMissions, setLoadingMissions] = useState(false);
 
   const channelRef = useRef<any>(null);
+  const refreshIntervalRef = useRef<any>(null);
 
   useEffect(() => {
     loadDriver();
 
     return () => {
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-      }
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
+      }
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
       }
     };
   }, []);
@@ -58,6 +61,7 @@ export default function DriverDashboard() {
       await supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
+    if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
     await supabase.auth.signOut();
     router.push("/");
   }
@@ -66,25 +70,26 @@ export default function DriverDashboard() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
 
-    const { data: driver } = await supabase
+    const { data: driver, error } = await supabase
       .from("driver_profiles")
       .select("*")
       .eq("user_id", user.id)
       .single();
 
-    if (!driver) {
-      router.push("/register/driver");
+    if (error || !driver) {
+      router.push("/register/driver/dossier");
       return;
     }
 
     setDriverProfile(driver);
+    setLoading(false);
 
-    await loadAvailableMissions(driver);
+    // ✅ Charger les missions même si hors ligne
+    await loadAvailableMissions();
     await loadActiveMission(driver.id);
     await loadHistory(driver.id);
 
-    setLoading(false);
-
+    // ✅ Canal Realtime
     if (channelRef.current) {
       await supabase.removeChannel(channelRef.current);
       channelRef.current = null;
@@ -92,37 +97,45 @@ export default function DriverDashboard() {
 
     const channel = supabase
       .channel(`driver-missions-${driver.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "orders",
-        },
-        () => {
-          loadAvailableMissions(driver);
-          loadActiveMission(driver.id);
-        }
-      )
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "orders",
+      }, () => {
+        loadAvailableMissions();
+        loadActiveMission(driver.id);
+      })
       .subscribe();
 
     channelRef.current = channel;
+
+    // ✅ Rafraîchissement automatique toutes les 30 secondes
+    refreshIntervalRef.current = setInterval(() => {
+      loadAvailableMissions();
+    }, 30000);
   }
 
-  async function loadAvailableMissions(driver: any) {
-    if (!driver.is_verified || !driver.is_available) {
-      setAvailableMissions([]);
-      return;
-    }
+  // ✅ Charge TOUTES les missions prêtes — sans filtre is_available
+  async function loadAvailableMissions() {
+    setLoadingMissions(true);
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("orders")
-      .select("*, pharmacies(name, city, logo_url, latitude, longitude), addresses(*)")
+      .select(`
+        *,
+        pharmacies(name, city, logo_url, latitude, longitude),
+        addresses(*)
+      `)
       .eq("status", "ready")
       .is("driver_id", null)
       .order("ready_at", { ascending: true });
 
+    if (error) {
+      console.error("loadAvailableMissions error:", error.message);
+    }
+
     setAvailableMissions(data || []);
+    setLoadingMissions(false);
   }
 
   async function loadActiveMission(driverId: string) {
@@ -180,7 +193,6 @@ export default function DriverDashboard() {
     if (newStatus) {
       showToast("Vous êtes maintenant disponible 🟢");
       startGPS();
-      await loadAvailableMissions(updated);
     } else {
       showToast("Vous n'êtes plus disponible 🔴");
       stopGPS();
@@ -193,7 +205,6 @@ export default function DriverDashboard() {
     const id = navigator.geolocation.watchPosition(
       async (pos) => {
         if (!driverProfile) return;
-
         await supabase.from("driver_locations").upsert({
           driver_id: driverProfile.id,
           latitude: pos.coords.latitude,
@@ -230,6 +241,12 @@ export default function DriverDashboard() {
 
   async function acceptMission(orderId: string) {
     if (!driverProfile) return;
+
+    if (!driverProfile.is_available) {
+      showToast("Activez votre disponibilité pour accepter une mission", "error");
+      return;
+    }
+
     setUpdating(true);
 
     const { error } = await supabase
@@ -246,7 +263,7 @@ export default function DriverDashboard() {
     if (error) {
       showToast("Cette mission n'est plus disponible", "error");
       setUpdating(false);
-      await loadAvailableMissions(driverProfile);
+      await loadAvailableMissions();
       return;
     }
 
@@ -272,7 +289,7 @@ export default function DriverDashboard() {
     showToast("Mission acceptée ! 🏍️");
     startGPS();
     await loadActiveMission(driverProfile.id);
-    await loadAvailableMissions(driverProfile);
+    await loadAvailableMissions();
     setUpdating(false);
     setTab("active");
   }
@@ -349,7 +366,6 @@ export default function DriverDashboard() {
 
   function getMissionActions(): { label: string; emoji: string; status: string; color: string }[] {
     if (!activeMission) return [];
-
     switch (activeMission.status) {
       case "driver_assigned":
         return [{ label: "Arrivé à la pharmacie", emoji: "🏥", status: "driver_arrived_at_pharmacy", color: "bg-indigo-600" }];
@@ -403,7 +419,7 @@ export default function DriverDashboard() {
     <main className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-28">
       <div className="max-w-lg mx-auto px-4 pt-6">
 
-        {/* Header + disponibilité + déconnexion */}
+        {/* Header */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm mb-5">
           <div className="flex items-center justify-between">
             <div>
@@ -436,7 +452,7 @@ export default function DriverDashboard() {
             </div>
           </div>
 
-          {/* Stats rapides */}
+          {/* Stats */}
           <div className="grid grid-cols-3 gap-2 mt-4">
             <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-2 text-center">
               <p className="text-lg font-bold text-[#00572D] dark:text-green-400">
@@ -486,22 +502,56 @@ export default function DriverDashboard() {
           ))}
         </div>
 
-        {/* MISSIONS DISPONIBLES */}
+        {/* ========== MISSIONS DISPONIBLES ========== */}
         {tab === "missions" && (
           <div className="space-y-3">
+
+            {/* Info hors ligne */}
             {!driverProfile.is_available && (
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3 text-center">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                  ⚠️ Activez votre disponibilité pour recevoir des missions.
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3">
+                <p className="text-xs text-yellow-700 dark:text-yellow-400 text-center font-semibold">
+                  🔴 Vous êtes hors ligne
+                </p>
+                <p className="text-xs text-yellow-600 dark:text-yellow-400 text-center mt-1">
+                  Activez votre disponibilité pour accepter des missions.
+                  Vous pouvez voir les missions disponibles ci-dessous.
                 </p>
               </div>
             )}
 
-            {driverProfile.is_available && availableMissions.length === 0 && (
+            {/* Bouton rafraîchir */}
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                {availableMissions.length} mission{availableMissions.length !== 1 ? "s" : ""} disponible{availableMissions.length !== 1 ? "s" : ""}
+              </p>
+              <button
+                onClick={loadAvailableMissions}
+                disabled={loadingMissions}
+                className="text-xs text-[#00572D] dark:text-green-400 font-semibold flex items-center gap-1 disabled:opacity-50"
+              >
+                {loadingMissions ? (
+                  <span className="w-3 h-3 border border-[#00572D] border-t-transparent rounded-full animate-spin inline-block" />
+                ) : (
+                  "🔄"
+                )}
+                Actualiser
+              </button>
+            </div>
+
+            {/* Chargement */}
+            {loadingMissions && (
+              <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 text-center shadow-sm">
+                <div className="w-6 h-6 border-2 border-[#00572D] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                <p className="text-xs text-gray-500 dark:text-gray-400">Chargement des missions...</p>
+              </div>
+            )}
+
+            {/* Aucune mission */}
+            {!loadingMissions && availableMissions.length === 0 && (
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-10 text-center shadow-sm">
                 <div className="text-5xl mb-3">🔍</div>
                 <p className="text-gray-500 dark:text-gray-400 font-medium">
-                  Aucune mission disponible pour le moment
+                  Aucune mission disponible
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
                   Les nouvelles missions apparaîtront ici automatiquement.
@@ -509,57 +559,95 @@ export default function DriverDashboard() {
               </div>
             )}
 
-            {availableMissions.map((mission) => (
+            {/* Liste missions */}
+            {!loadingMissions && availableMissions.map((mission) => (
               <div
                 key={mission.id}
                 className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
               >
+                {/* Pharmacie */}
                 <div className="flex items-center gap-3 mb-3">
-                  {mission.pharmacies?.logo_url && (
-                    <img src={mission.pharmacies.logo_url} alt="" className="w-10 h-10 rounded-full object-cover border-2 border-gray-100 dark:border-gray-700" />
+                  {mission.pharmacies?.logo_url ? (
+                    <img
+                      src={mission.pharmacies.logo_url}
+                      alt=""
+                      className="w-10 h-10 rounded-full object-cover border-2 border-gray-100 dark:border-gray-700"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-[#00572D]/10 flex items-center justify-center text-lg">
+                      🏥
+                    </div>
                   )}
                   <div>
-                    <p className="font-bold text-sm dark:text-white">🏥 {mission.pharmacies?.name}</p>
-                    <p className="text-xs text-gray-400">📍 {mission.pharmacies?.city}</p>
+                    <p className="font-bold text-sm dark:text-white">
+                      🏥 {mission.pharmacies?.name || "Pharmacie"}
+                    </p>
+                    <p className="text-xs text-gray-400">📍 {mission.pharmacies?.city || "—"}</p>
+                  </div>
+                  <div className="ml-auto">
+                    <span className="text-[10px] bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 px-2 py-1 rounded-full font-bold">
+                      🎁 Prête
+                    </span>
                   </div>
                 </div>
 
+                {/* Adresse livraison */}
                 {mission.addresses && (
-                  <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-2 mb-3">
+                  <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-2.5 mb-3">
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      🏠 Livrer à : {mission.addresses.address_line}, {mission.addresses.city}
+                      🏠 <span className="font-medium">{mission.addresses.address_line}</span>
+                      {mission.addresses.district && `, ${mission.addresses.district}`}
                     </p>
+                    <p className="text-xs text-gray-400">📍 {mission.addresses.city}</p>
                   </div>
                 )}
 
-                <div className="flex justify-between items-center mb-3">
+                {/* Montants */}
+                <div className="flex justify-between items-center mb-3 bg-green-50 dark:bg-green-900/10 rounded-xl p-2.5">
                   <div>
-                    <p className="text-xs text-gray-400">Frais de livraison</p>
-                    <p className="font-bold text-[#00572D] dark:text-green-400">
+                    <p className="text-[10px] text-gray-400">Frais de livraison</p>
+                    <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
                       {(mission.delivery_fee || 0).toLocaleString()} FCFA
                     </p>
                   </div>
+                  <div className="w-px h-8 bg-gray-200 dark:bg-gray-700" />
                   <div className="text-right">
-                    <p className="text-xs text-gray-400">Votre gain</p>
-                    <p className="font-bold text-[#00572D] dark:text-green-400">
+                    <p className="text-[10px] text-gray-400">Votre gain estimé</p>
+                    <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
                       {(mission.driver_earning || 0).toLocaleString()} FCFA
                     </p>
                   </div>
                 </div>
 
+                {/* Date */}
+                {mission.ready_at && (
+                  <p className="text-[10px] text-gray-400 mb-3 text-center">
+                    🕒 Prête depuis {new Date(mission.ready_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                )}
+
+                {/* Bouton accepter */}
                 <button
                   onClick={() => acceptMission(mission.id)}
-                  disabled={updating}
-                  className="w-full bg-[#00572D] text-white p-3 rounded-xl font-bold text-sm disabled:opacity-50"
+                  disabled={updating || !driverProfile.is_available}
+                  className={`w-full p-3 rounded-xl font-bold text-sm transition ${
+                    !driverProfile.is_available
+                      ? "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
+                      : "bg-[#00572D] text-white hover:bg-green-800 disabled:opacity-50"
+                  }`}
                 >
-                  {updating ? "Acceptation..." : "✅ Accepter cette mission"}
+                  {updating
+                    ? "Acceptation..."
+                    : !driverProfile.is_available
+                    ? "🔴 Passez en ligne pour accepter"
+                    : "✅ Accepter cette mission"}
                 </button>
               </div>
             ))}
           </div>
         )}
 
-        {/* MISSION ACTIVE */}
+        {/* ========== MISSION ACTIVE ========== */}
         {tab === "active" && (
           <div>
             {!activeMission && (
@@ -590,7 +678,12 @@ export default function DriverDashboard() {
                   </p>
                   <p className="text-xs text-gray-400">📍 {activeMission.pharmacies?.city}</p>
                   {activeMission.pharmacies?.phone && (
-                    <p className="text-xs text-gray-400">📞 {activeMission.pharmacies.phone}</p>
+                    <a
+                      href={`tel:${activeMission.pharmacies.phone}`}
+                      className="inline-block mt-2 text-xs text-[#00572D] dark:text-green-400 font-semibold"
+                    >
+                      📞 {activeMission.pharmacies.phone}
+                    </a>
                   )}
                 </div>
 
@@ -599,16 +692,25 @@ export default function DriverDashboard() {
                   {activeMissionItems.map((item) => (
                     <div key={item.id} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
                       <p className="text-xs dark:text-gray-300">{item.medicine_name} × {item.quantity}</p>
-                      <p className="text-xs font-bold text-[#00572D] dark:text-green-400">{item.subtotal?.toLocaleString()} FCFA</p>
+                      <p className="text-xs font-bold text-[#00572D] dark:text-green-400">
+                        {item.subtotal?.toLocaleString()} FCFA
+                      </p>
                     </div>
                   ))}
                 </div>
 
                 {activeMissionAddress && (
                   <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                    <p className="font-bold text-sm mb-1 dark:text-white">🏠 Livrer à</p>
-                    <p className="text-sm text-gray-600 dark:text-gray-300">{activeMissionAddress.full_name}</p>
-                    <p className="text-xs text-gray-400">📞 {activeMissionAddress.phone}</p>
+                    <p className="font-bold text-sm mb-2 dark:text-white">🏠 Livrer à</p>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                      {activeMissionAddress.full_name}
+                    </p>
+                    <a
+                      href={`tel:${activeMissionAddress.phone}`}
+                      className="text-xs text-[#00572D] dark:text-green-400 font-semibold"
+                    >
+                      📞 {activeMissionAddress.phone}
+                    </a>
                     <p className="text-xs text-gray-400 mt-1">
                       {activeMissionAddress.address_line}
                       {activeMissionAddress.district && `, ${activeMissionAddress.district}`}
@@ -657,7 +759,7 @@ export default function DriverDashboard() {
           </div>
         )}
 
-        {/* HISTORIQUE */}
+        {/* ========== HISTORIQUE ========== */}
         {tab === "history" && (
           <div className="space-y-3">
             {history.length === 0 && (
@@ -670,10 +772,7 @@ export default function DriverDashboard() {
             )}
 
             {history.map((order) => (
-              <div
-                key={order.id}
-                className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
-              >
+              <div key={order.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
                 <div className="flex justify-between items-center">
                   <div>
                     <p className="font-bold text-sm dark:text-white">🏥 {order.pharmacies?.name}</p>
@@ -700,7 +799,7 @@ export default function DriverDashboard() {
           </div>
         )}
 
-        {/* PROFIL */}
+        {/* ========== PROFIL ========== */}
         {tab === "profile" && (
           <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm space-y-4">
             <div className="text-center">
@@ -722,8 +821,8 @@ export default function DriverDashboard() {
                 { label: "Plaque", value: driverProfile.vehicle_plate || "—" },
                 { label: "Couleur", value: driverProfile.vehicle_color || "—" },
                 {
-                  label: "Vérifié",
-                  value: driverProfile.is_verified ? "✅ Oui" : "⏳ En attente",
+                  label: "Statut",
+                  value: driverProfile.is_verified ? "✅ Vérifié" : "⏳ En attente",
                   valueClass: driverProfile.is_verified ? "text-green-600" : "text-yellow-600",
                 },
                 { label: "Livraisons", value: String(driverProfile.total_deliveries) },
@@ -740,10 +839,9 @@ export default function DriverDashboard() {
               ))}
             </div>
 
-            {/* Déconnexion dans le profil aussi */}
             <button
               onClick={handleLogout}
-              className="w-full bg-red-500 hover:bg-red-600 text-white p-3 rounded-xl font-bold text-sm transition mt-4"
+              className="w-full bg-red-500 hover:bg-red-600 text-white p-3 rounded-xl font-bold text-sm transition"
             >
               🚪 Déconnexion
             </button>
