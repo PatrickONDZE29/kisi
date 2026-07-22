@@ -82,9 +82,6 @@ export default function AdminDashboard() {
     router.push("/");
   }
 
-  // ============================================================
-  // CHARGEMENT DES DONNÉES
-  // ============================================================
   async function loadStats() {
     const today = new Date().toISOString().split("T")[0];
 
@@ -156,10 +153,7 @@ export default function AdminDashboard() {
   async function loadDisputes() {
     const { data } = await supabase
       .from("disputes")
-      .select(`
-        *,
-        orders(total, subtotal, delivery_fee, escrow_status, pharmacies(name))
-      `)
+      .select(`*, orders(total, subtotal, delivery_fee, escrow_status, pharmacies(name))`)
       .order("created_at", { ascending: false });
     setDisputes(data || []);
   }
@@ -186,9 +180,6 @@ export default function AdminDashboard() {
     setSettings(data);
   }
 
-  // ============================================================
-  // ACTIONS
-  // ============================================================
   async function togglePharmacy(pharmacyId: string, isOpen: boolean) {
     const { error } = await supabase.from("pharmacies").update({ is_open: isOpen }).eq("id", pharmacyId);
     if (error) { showToast(error.message, "error"); return; }
@@ -249,25 +240,18 @@ export default function AdminDashboard() {
     await loadStats();
   }
 
-  // ============================================================
-  // RÉSOLUTION DES LITIGES
-  // ============================================================
   async function resolveDisputeForClient(disputeId: string, orderId: string) {
     setResolvingDispute(disputeId);
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
-      // Rembourser — escrow remboursé
       await supabase.from("escrow_accounts").update({
         status: "refunded",
         released_at: new Date().toISOString(),
         released_by: user?.id,
       }).eq("order_id", orderId);
 
-      await supabase.from("orders").update({
-        escrow_status: "refunded",
-      }).eq("id", orderId);
+      await supabase.from("orders").update({ escrow_status: "refunded" }).eq("id", orderId);
 
       await supabase.from("disputes").update({
         status: "resolved_client",
@@ -276,7 +260,6 @@ export default function AdminDashboard() {
         resolution_note: "Résolu en faveur du client — Remboursé",
       }).eq("id", disputeId);
 
-      // Notification client
       const { data: dispute } = await supabase
         .from("disputes")
         .select("user_id, order_id")
@@ -304,11 +287,9 @@ export default function AdminDashboard() {
 
   async function resolveDisputeForDriver(disputeId: string, orderId: string) {
     setResolvingDispute(disputeId);
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
-      // Récupérer l'escrow
       const { data: escrow } = await supabase
         .from("escrow_accounts")
         .select("*")
@@ -316,7 +297,6 @@ export default function AdminDashboard() {
         .single();
 
       if (escrow && escrow.status === "disputed") {
-        // Récupérer le livreur
         const { data: order } = await supabase
           .from("orders")
           .select("driver_id, driver_profiles(user_id, total_earnings, total_deliveries)")
@@ -324,7 +304,6 @@ export default function AdminDashboard() {
           .single();
 
         if (order?.driver_id) {
-          // Créer/récupérer wallet livreur
           const { data: driverWallet } = await supabase
             .from("wallets")
             .select("id, balance, total_received")
@@ -347,7 +326,6 @@ export default function AdminDashboard() {
             });
           }
 
-          // Transaction
           await supabase.from("financial_transactions").insert({
             order_id: orderId,
             type: "escrow_release",
@@ -356,7 +334,6 @@ export default function AdminDashboard() {
             description: "Litige résolu en faveur du livreur par admin",
           });
 
-          // Notification livreur
           const driverUserId = (order.driver_profiles as any)?.user_id;
           if (driverUserId) {
             await supabase.from("notifications").insert({
@@ -375,9 +352,7 @@ export default function AdminDashboard() {
           released_by: user?.id,
         }).eq("order_id", orderId);
 
-        await supabase.from("orders").update({
-          escrow_status: "released",
-        }).eq("id", orderId);
+        await supabase.from("orders").update({ escrow_status: "released" }).eq("id", orderId);
       }
 
       await supabase.from("disputes").update({
@@ -396,9 +371,6 @@ export default function AdminDashboard() {
     }
   }
 
-  // ============================================================
-  // COMPUTED
-  // ============================================================
   const pendingDrivers = drivers.filter((d) => !d.is_verified);
   const verifiedDrivers = drivers.filter((d) => d.is_verified);
   const openDisputes = disputes.filter((d) => d.status === "open");
@@ -417,18 +389,25 @@ export default function AdminDashboard() {
     <main className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-28">
       <div className="max-w-4xl mx-auto px-4 pt-6">
 
-        {/* HEADER */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-[#00572D] dark:text-green-400">⚙️ Admin KISI</h1>
-            <p className="text-gray-500 dark:text-gray-400 text-sm">Tableau de bord administrateur</p>
+        {/* ✅ HEADER avec bouton déconnexion complet */}
+        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-bold text-[#00572D] dark:text-green-400">
+                ⚙️ Admin KISI
+              </h1>
+              <p className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">
+                Tableau de bord administrateur
+              </p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm transition shadow-md whitespace-nowrap"
+            >
+              <span>🚪</span>
+              <span>Déconnexion</span>
+            </button>
           </div>
-          <button
-            onClick={handleLogout}
-            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow"
-          >
-            🚪 Déconnexion
-          </button>
         </div>
 
         {/* TABS */}
@@ -464,7 +443,6 @@ export default function AdminDashboard() {
         {/* ========== VUE GLOBALE ========== */}
         {tab === "overview" && (
           <div className="space-y-4">
-            {/* Stats aujourd'hui */}
             <div className="bg-[#00572D] rounded-2xl p-4 text-white">
               <p className="font-bold text-sm mb-3">📅 Aujourd'hui</p>
               <div className="grid grid-cols-2 gap-3">
@@ -479,7 +457,6 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* Chiffres globaux */}
             <div className="grid grid-cols-2 gap-3">
               {[
                 { label: "Utilisateurs", value: stats.totalUsers, emoji: "👤" },
@@ -495,7 +472,6 @@ export default function AdminDashboard() {
               ))}
             </div>
 
-            {/* Revenus et Escrow */}
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm text-center">
                 <p className="text-xs text-gray-400 mb-1">💰 Commissions KISI</p>
@@ -513,7 +489,6 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* Alertes */}
             {stats.pendingDrivers > 0 && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3">
                 <p className="text-sm font-bold text-yellow-700 dark:text-yellow-400">
@@ -739,20 +714,13 @@ export default function AdminDashboard() {
                     )}
                     <p className="text-xs text-gray-400">
                       {new Date(order.created_at).toLocaleDateString("fr-FR", {
-                        day: "numeric",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
+                        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
                       })}
                     </p>
-                    {/* Statut escrow */}
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 inline-block ${
-                      order.escrow_status === "held"
-                        ? "bg-orange-100 text-orange-600"
-                        : order.escrow_status === "released"
-                        ? "bg-green-100 text-green-700"
-                        : order.escrow_status === "disputed"
-                        ? "bg-red-100 text-red-600"
+                      order.escrow_status === "held" ? "bg-orange-100 text-orange-600"
+                        : order.escrow_status === "released" ? "bg-green-100 text-green-700"
+                        : order.escrow_status === "disputed" ? "bg-red-100 text-red-600"
                         : "bg-gray-100 text-gray-500"
                     }`}>
                       {order.escrow_status === "held" ? "🔒 Escrow bloqué"
@@ -790,13 +758,11 @@ export default function AdminDashboard() {
         {/* ========== REVENUS ========== */}
         {tab === "revenues" && (
           <div className="space-y-4">
-            {/* Total commissions */}
             <div className="bg-[#00572D] rounded-2xl p-5 text-white text-center">
               <p className="text-sm text-green-200 mb-1">Commissions KISI totales</p>
               <p className="text-4xl font-black">{stats.totalRevenues.toLocaleString()} FCFA</p>
             </div>
 
-            {/* Escrow en cours */}
             <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-2xl p-4 text-center">
               <p className="text-xs text-orange-600 dark:text-orange-400 mb-1">🔒 Fonds en escrow (en attente)</p>
               <p className="text-2xl font-black text-orange-600 dark:text-orange-400">
@@ -804,7 +770,6 @@ export default function AdminDashboard() {
               </p>
             </div>
 
-            {/* Wallets */}
             {wallets.length > 0 && (
               <div>
                 <p className="font-bold text-sm dark:text-white mb-2">💼 Portefeuilles</p>
@@ -839,7 +804,6 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {/* Transactions récentes */}
             <p className="font-bold text-sm dark:text-white">📋 Dernières transactions</p>
             {financialTransactions.map((tx) => (
               <div key={tx.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-3 shadow-sm">
@@ -863,10 +827,7 @@ export default function AdminDashboard() {
                     </p>
                     <p className="text-xs text-gray-400">
                       {new Date(tx.created_at).toLocaleDateString("fr-FR", {
-                        day: "numeric",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
+                        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
                       })}
                     </p>
                   </div>
@@ -897,7 +858,6 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {/* Litiges ouverts */}
             {openDisputes.length > 0 && (
               <div>
                 <p className="font-bold text-sm text-red-600 dark:text-red-400 mb-2">
@@ -919,10 +879,7 @@ export default function AdminDashboard() {
                           )}
                           <p className="text-xs text-gray-400 mt-1">
                             🗓️ {new Date(dispute.created_at).toLocaleDateString("fr-FR", {
-                              day: "numeric",
-                              month: "short",
-                              hour: "2-digit",
-                              minute: "2-digit",
+                              day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
                             })}
                           </p>
                         </div>
@@ -956,12 +913,9 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {/* Litiges résolus */}
             {disputes.filter(d => d.status !== "open").length > 0 && (
               <div>
-                <p className="font-bold text-sm text-gray-500 dark:text-gray-400 mb-2">
-                  ✅ Litiges résolus
-                </p>
+                <p className="font-bold text-sm text-gray-500 dark:text-gray-400 mb-2">✅ Litiges résolus</p>
                 <div className="space-y-2">
                   {disputes.filter(d => d.status !== "open").map((dispute) => (
                     <div key={dispute.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-3 shadow-sm">
