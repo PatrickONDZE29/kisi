@@ -40,8 +40,6 @@ function getStatusConfig(status: string) {
 }
 
 const DELIVERY_STATUSES = ["picked_up", "on_the_way", "driver_arrived"];
-
-// ✅ Statuts où le client peut confirmer la livraison
 const CONFIRMABLE_STATUSES = ["driver_arrived", "on_the_way", "picked_up"];
 
 const ORDER_STEPS = [
@@ -61,7 +59,10 @@ function getProgressIndex(status: string) {
 // =====================================================
 // UTILITAIRES ESCROW
 // =====================================================
-async function getOrCreateWallet(ownerId: string, ownerType: "pharmacy" | "driver" | "kisi"): Promise<string> {
+async function getOrCreateWallet(
+  ownerId: string,
+  ownerType: "pharmacy" | "driver" | "kisi"
+): Promise<string> {
   const { data: existing } = await supabase
     .from("wallets")
     .select("id")
@@ -114,7 +115,6 @@ export default function ReservationsPage() {
   const [tab, setTab] = useState<"active" | "history">("active");
   const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // États escrow
   const [confirming, setConfirming] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
@@ -234,47 +234,60 @@ export default function ReservationsPage() {
   }
 
   // =====================================================
-  // ✅ CONFIRMER LA LIVRAISON — LIBÉRER L'ESCROW
+  // ✅ CONFIRMER LA LIVRAISON — CORRIGÉ
   // =====================================================
   async function confirmDelivery(orderId: string) {
     if (!currentUser) return;
     setConfirming(true);
 
     try {
-      // Récupérer l'escrow
+      // 1. Récupérer l'escrow
       const { data: escrow } = await supabase
         .from("escrow_accounts")
         .select("*")
         .eq("order_id", orderId)
         .maybeSingle();
 
-      // Récupérer la commande
-      const { data: order } = await supabase
+      // 2. Récupérer la commande SANS join pour éviter les erreurs null
+      const { data: order, error: orderError } = await supabase
         .from("orders")
-        .select("*, driver_profiles(id, user_id, full_name, total_earnings, total_deliveries)")
+        .select("*")
         .eq("id", orderId)
         .single();
 
-      if (!order) throw new Error("Commande introuvable");
+      if (orderError || !order) {
+        throw new Error("Commande introuvable");
+      }
 
-      // Libérer l'escrow si existant
+      // 3. Libérer l'escrow si existant ET si livreur assigné
       if (escrow && escrow.status === "held" && order.driver_id) {
         const driverProfileId = order.driver_id;
-        const driverUserId = order.driver_profiles?.user_id;
 
+        // Récupérer le livreur séparément
+        const { data: driverData } = await supabase
+          .from("driver_profiles")
+          .select("id, user_id, total_earnings, total_deliveries")
+          .eq("id", driverProfileId)
+          .single();
+
+        const driverUserId = driverData?.user_id || null;
+
+        // Wallet livreur
         const driverWalletId = await getOrCreateWallet(driverProfileId, "driver");
         await creditWallet(driverWalletId, escrow.driver_amount);
 
+        // Wallet KISI
         const { data: kisiWallet } = await supabase
           .from("wallets")
           .select("id")
           .eq("owner_type", "kisi")
           .maybeSingle();
 
-        if (kisiWallet) {
+        if (kisiWallet?.id) {
           await creditWallet(kisiWallet.id, escrow.commission_amount);
         }
 
+        // Transactions financières
         await supabase.from("financial_transactions").insert([
           {
             order_id: orderId,
@@ -293,19 +306,22 @@ export default function ReservationsPage() {
           },
         ]);
 
+        // Libérer l'escrow
         await supabase.from("escrow_accounts").update({
           status: "released",
           released_at: new Date().toISOString(),
         }).eq("order_id", orderId);
 
-        const currentEarnings = Number(order.driver_profiles?.total_earnings || 0);
-        const currentDeliveries = Number(order.driver_profiles?.total_deliveries || 0);
+        // Mettre à jour les gains du livreur
+        const currentEarnings = Number(driverData?.total_earnings || 0);
+        const currentDeliveries = Number(driverData?.total_deliveries || 0);
 
         await supabase.from("driver_profiles").update({
           total_earnings: currentEarnings + escrow.driver_amount,
           total_deliveries: currentDeliveries + 1,
         }).eq("id", driverProfileId);
 
+        // Notification livreur
         if (driverUserId) {
           await supabase.from("notifications").insert({
             user_id: driverUserId,
@@ -317,20 +333,22 @@ export default function ReservationsPage() {
         }
       }
 
-      // Mettre à jour le stock
+      // 4. Mettre à jour le stock
       const { data: orderItemsList } = await supabase
         .from("order_items")
         .select("*")
         .eq("order_id", orderId);
 
-      if (orderItemsList) {
+      if (orderItemsList && orderItemsList.length > 0) {
         for (const item of orderItemsList) {
+          if (!item.medicine_id || !item.pharmacy_id) continue;
+
           const { data: stock } = await supabase
             .from("stock")
             .select("id, quantity")
             .eq("medicine_id", item.medicine_id)
             .eq("pharmacy_id", item.pharmacy_id)
-            .single();
+            .maybeSingle();
 
           if (stock && stock.quantity >= item.quantity) {
             await supabase
@@ -341,25 +359,29 @@ export default function ReservationsPage() {
         }
       }
 
-      // ✅ Mettre à jour la commande → delivered
-      await supabase.from("orders").update({
+      // 5. Mettre à jour la commande → delivered
+      const { error: updateError } = await supabase.from("orders").update({
         status: "delivered",
-        escrow_status: "released",
+        escrow_status: escrow ? "released" : order.escrow_status,
         client_confirmed: true,
         client_confirmed_at: new Date().toISOString(),
         delivered_at: new Date().toISOString(),
       }).eq("id", orderId);
 
-      // Événement
+      if (updateError) {
+        throw new Error("Erreur mise à jour commande : " + updateError.message);
+      }
+
+      // 6. Événement
       await supabase.from("delivery_events").insert({
         order_id: orderId,
         actor_type: "user",
         actor_id: currentUser.id,
         status: "delivered",
-        label: "Client a confirmé la réception — paiements effectués",
+        label: "Client a confirmé la réception",
       });
 
-      // Notification client
+      // 7. Notification client
       await supabase.from("notifications").insert({
         user_id: currentUser.id,
         type: "delivery",
@@ -368,19 +390,31 @@ export default function ReservationsPage() {
         order_id: orderId,
       });
 
-      // Notification pharmacie
-      await supabase.from("notifications").insert({
-        user_id: order.user_id,
-        type: "order_update",
-        title: "Commande livrée 🎉",
-        body: "La commande a été livrée et confirmée par le client.",
-        order_id: orderId,
-      });
+      // 8. Notification pharmacie
+      if (order.pharmacy_id) {
+        const { data: pharmacy } = await supabase
+          .from("pharmacies")
+          .select("user_id")
+          .eq("id", order.pharmacy_id)
+          .single();
+
+        if (pharmacy?.user_id) {
+          await supabase.from("notifications").insert({
+            user_id: pharmacy.user_id,
+            type: "order_update",
+            title: "Commande livrée 🎉",
+            body: "La commande a été livrée et confirmée par le client. Elle est maintenant dans votre historique.",
+            order_id: orderId,
+          });
+        }
+      }
 
       showToast("✅ Livraison confirmée ! Le livreur a été payé automatiquement.");
       closeDetail();
       await loadAll();
+
     } catch (err: any) {
+      console.error("confirmDelivery error:", err);
       showToast(err.message || "Erreur lors de la confirmation", "error");
     } finally {
       setConfirming(false);
@@ -611,7 +645,6 @@ export default function ReservationsPage() {
                             🏍️ {item.driver_profiles.full_name}
                           </span>
                         )}
-                        {/* ✅ Indicateur confirmation requise */}
                         {needsConfirmation && (
                           <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full font-bold animate-pulse">
                             ✅ Confirmer la livraison
@@ -863,7 +896,7 @@ export default function ReservationsPage() {
                 </div>
               )}
 
-              {/* Code OTP visible pour le client */}
+              {/* Code OTP */}
               {selectedType === "order" &&
                 selectedItem.pickup_otp &&
                 ["ready", "driver_assigned", "driver_arrived_at_pharmacy"].includes(selectedItem.status) && (
