@@ -24,13 +24,115 @@ interface DeliverySettings {
   commission_percent: number;
 }
 
+// ============================================================
+// UTILITAIRES ESCROW
+// ============================================================
+async function getOrCreateWallet(
+  ownerId: string,
+  ownerType: "pharmacy" | "driver" | "kisi"
+): Promise<string> {
+  const { data: existing } = await supabase
+    .from("wallets")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .eq("owner_type", ownerType)
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  const { data: created } = await supabase
+    .from("wallets")
+    .insert({ owner_id: ownerId, owner_type: ownerType, balance: 0 })
+    .select("id")
+    .single();
+
+  return created!.id;
+}
+
+async function creditWallet(walletId: string, amount: number) {
+  const { data: wallet } = await supabase
+    .from("wallets")
+    .select("balance, total_received")
+    .eq("id", walletId)
+    .single();
+
+  if (!wallet) return;
+
+  await supabase.from("wallets").update({
+    balance: Number(wallet.balance) + amount,
+    total_received: Number(wallet.total_received) + amount,
+    updated_at: new Date().toISOString(),
+  }).eq("id", walletId);
+}
+
+// ============================================================
+// PROCESSUS ESCROW AU PAIEMENT
+// ============================================================
+async function processEscrowOnPayment(
+  orderId: string,
+  pharmacyId: string,
+  subtotal: number,
+  deliveryFee: number,
+  commissionPercent: number
+) {
+  // 1. Créer/récupérer le wallet de la pharmacie
+  const pharmacyWalletId = await getOrCreateWallet(pharmacyId, "pharmacy");
+
+  // 2. Créditer la pharmacie immédiatement
+  await creditWallet(pharmacyWalletId, subtotal);
+
+  // 3. Transaction pharmacie
+  await supabase.from("financial_transactions").insert({
+    order_id: orderId,
+    type: "pharmacy_payment",
+    to_wallet_id: pharmacyWalletId,
+    amount: subtotal,
+    status: "completed",
+    description: `Paiement médicaments — commande ${orderId.substring(0, 8)}`,
+  });
+
+  // 4. Escrow pour les frais de livraison
+  if (deliveryFee > 0) {
+    const commissionAmount = Math.round(deliveryFee * (commissionPercent / 100));
+    const driverAmount = deliveryFee - commissionAmount;
+
+    await supabase.from("escrow_accounts").upsert({
+      order_id: orderId,
+      amount: deliveryFee,
+      commission_amount: commissionAmount,
+      driver_amount: driverAmount,
+      status: "held",
+      held_at: new Date().toISOString(),
+    });
+
+    await supabase.from("financial_transactions").insert({
+      order_id: orderId,
+      type: "delivery_escrow",
+      amount: deliveryFee,
+      status: "pending",
+      description: `Frais livraison en escrow — commande ${orderId.substring(0, 8)}`,
+      metadata: { commission: commissionAmount, driver_earning: driverAmount },
+    });
+  }
+
+  // 5. Mettre à jour la commande
+  await supabase.from("orders").update({
+    pharmacy_paid: true,
+    pharmacy_paid_at: new Date().toISOString(),
+    pharmacy_payment_amount: subtotal,
+    escrow_status: deliveryFee > 0 ? "held" : "released",
+  }).eq("id", orderId);
+}
+
+// ============================================================
+// PAGE CHECKOUT
+// ============================================================
 export default function CheckoutPage() {
   const { items, totalAmount, clearCart } = useCart();
   const { showToast } = useToast();
   const router = useRouter();
 
   const [step, setStep] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [paymentProcessing, setPaymentProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -83,10 +185,7 @@ export default function CheckoutPage() {
 
   async function loadUser() {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      router.push("/login");
-      return;
-    }
+    if (!user) { router.push("/login"); return; }
     setUser(user);
 
     const { data: profile } = await supabase
@@ -121,10 +220,8 @@ export default function CheckoutPage() {
   function calculateDeliveryFee(distanceKm: number, s?: DeliverySettings) {
     const cfg = s || settings;
     if (!cfg) return;
-
     const distance = Math.min(distanceKm, cfg.maximum_distance_km);
     setEstimatedDistance(distance);
-
     const fee = Math.max(distance * cfg.price_per_km, cfg.minimum_fee);
     setDeliveryFee(Math.round(fee));
   }
@@ -142,7 +239,6 @@ export default function CheckoutPage() {
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
         }));
-
         const simulatedDistance = 3 + Math.random() * 12;
         calculateDeliveryFee(Math.round(simulatedDistance * 10) / 10);
         showToast("Position détectée !");
@@ -155,23 +251,11 @@ export default function CheckoutPage() {
   }
 
   function validateAddress() {
-    if (!address.full_name.trim()) {
-      showToast("Nom complet requis", "error");
-      return false;
-    }
-    if (!address.phone.trim()) {
-      showToast("Téléphone requis", "error");
-      return false;
-    }
+    if (!address.full_name.trim()) { showToast("Nom complet requis", "error"); return false; }
+    if (!address.phone.trim()) { showToast("Téléphone requis", "error"); return false; }
     if (deliveryType === "delivery") {
-      if (!address.city.trim()) {
-        showToast("Ville requise", "error");
-        return false;
-      }
-      if (!address.address_line.trim()) {
-        showToast("Adresse requise", "error");
-        return false;
-      }
+      if (!address.city.trim()) { showToast("Ville requise", "error"); return false; }
+      if (!address.address_line.trim()) { showToast("Adresse requise", "error"); return false; }
     }
     return true;
   }
@@ -190,14 +274,14 @@ export default function CheckoutPage() {
 
     setPaymentProcessing(true);
 
-    // Simulation du paiement Mobile Money
+    // Simulation paiement Mobile Money
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
     const transactionRef = `KISI-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
     try {
       for (const group of pharmacyGroups) {
-        // Créer l'adresse
+        // 1. Créer l'adresse
         let addressId = null;
 
         if (deliveryType === "delivery") {
@@ -224,12 +308,11 @@ export default function CheckoutPage() {
         const groupDeliveryFee = deliveryType === "delivery" ? deliveryFee : 0;
         const groupSubtotal = group.subtotal;
         const groupTotal = groupSubtotal + groupDeliveryFee;
-        const commissionAmount = settings
-          ? Math.round(groupDeliveryFee * settings.commission_percent / 100)
-          : 0;
+        const commissionPercent = settings?.commission_percent || 10;
+        const commissionAmount = Math.round(groupDeliveryFee * commissionPercent / 100);
         const driverEarning = groupDeliveryFee - commissionAmount;
 
-        // Créer la commande
+        // 2. Créer la commande
         const { data: order, error: orderError } = await supabase
           .from("orders")
           .insert({
@@ -247,13 +330,16 @@ export default function CheckoutPage() {
             payment_status: "paid",
             payment_confirmed_at: new Date().toISOString(),
             pickup_otp: Math.floor(1000 + Math.random() * 9000).toString(),
+            pharmacy_paid: false,
+            escrow_status: groupDeliveryFee > 0 ? "held" : "released",
+            client_confirmed: false,
           })
           .select()
           .single();
 
         if (orderError) throw orderError;
 
-        // Créer les items
+        // 3. Créer les items
         const orderItems = group.items.map((item: any) => ({
           order_id: order.id,
           medicine_id: item.medicine_id,
@@ -271,7 +357,7 @@ export default function CheckoutPage() {
 
         if (itemsError) throw itemsError;
 
-        // Créer le paiement
+        // 4. Créer le paiement
         const { error: payError } = await supabase.from("payments").insert({
           order_id: order.id,
           user_id: user.id,
@@ -286,21 +372,49 @@ export default function CheckoutPage() {
 
         if (payError) throw payError;
 
-        // Créer les notifications
-        await supabase.from("notifications").insert({
-          user_id: user.id,
-          type: "payment",
-          title: "Paiement confirmé ✅",
-          body: `Votre commande de ${groupTotal.toLocaleString()} FCFA chez ${group.pharmacy_name} a été payée.`,
-          order_id: order.id,
-        });
+        // 5. ✅ ESCROW — Payer la pharmacie immédiatement + bloquer la livraison
+        await processEscrowOnPayment(
+          order.id,
+          group.pharmacy_id,
+          groupSubtotal,
+          groupDeliveryFee,
+          commissionPercent
+        );
 
-        // Événement
+        // 6. Notifications
+        await supabase.from("notifications").insert([
+          {
+            user_id: user.id,
+            type: "payment",
+            title: "Paiement confirmé ✅",
+            body: `Votre commande de ${groupTotal.toLocaleString()} FCFA chez ${group.pharmacy_name} a été payée. La pharmacie prépare votre commande.`,
+            order_id: order.id,
+          },
+        ]);
+
+        // Notification pharmacie
+        const { data: pharmacy } = await supabase
+          .from("pharmacies")
+          .select("user_id")
+          .eq("id", group.pharmacy_id)
+          .single();
+
+        if (pharmacy?.user_id) {
+          await supabase.from("notifications").insert({
+            user_id: pharmacy.user_id,
+            type: "payment",
+            title: "Nouvelle commande payée 💰",
+            body: `Vous avez reçu ${groupSubtotal.toLocaleString()} FCFA. Une commande est prête à préparer.`,
+            order_id: order.id,
+          });
+        }
+
+        // 7. Événement
         await supabase.from("delivery_events").insert({
           order_id: order.id,
           actor_type: "system",
           status: "payment_confirmed",
-          label: "Paiement confirmé",
+          label: `Paiement confirmé — Pharmacie payée : ${groupSubtotal.toLocaleString()} FCFA — Livraison en escrow : ${groupDeliveryFee.toLocaleString()} FCFA`,
         });
       }
 
@@ -317,15 +431,15 @@ export default function CheckoutPage() {
     }
   }
 
-  // Redirection si panier vide
+  // ============================================================
+  // ÉCRANS SPÉCIAUX
+  // ============================================================
   if (items.length === 0 && !paymentSuccess) {
     return (
       <main className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
         <div className="bg-white dark:bg-gray-900 rounded-3xl p-8 text-center max-w-sm shadow-xl">
           <div className="text-5xl mb-4">🛒</div>
-          <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">
-            Panier vide
-          </h2>
+          <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">Panier vide</h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">
             Ajoutez des médicaments pour passer commande.
           </p>
@@ -340,7 +454,6 @@ export default function CheckoutPage() {
     );
   }
 
-  // Écran de succès
   if (paymentSuccess) {
     return (
       <main className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
@@ -350,9 +463,25 @@ export default function CheckoutPage() {
             Paiement réussi !
           </h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">
-            Votre commande a été envoyée aux pharmacies.
-            Vous serez redirigé vers vos commandes.
+            La pharmacie a été payée immédiatement.
+            Les frais de livraison seront versés au livreur après votre confirmation.
           </p>
+
+          {/* Explication escrow */}
+          <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 text-left">
+            <p className="text-xs font-bold text-blue-700 dark:text-blue-400 mb-2">
+              🔐 Paiement sécurisé KISI
+            </p>
+            <div className="space-y-1">
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                ✅ Médicaments : versés à la pharmacie
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                🔒 Livraison : conservée par KISI jusqu'à votre confirmation
+              </p>
+            </div>
+          </div>
+
           <div className="mt-4">
             <div className="w-8 h-8 border-4 border-[#00572D] border-t-transparent rounded-full animate-spin mx-auto" />
           </div>
@@ -361,7 +490,6 @@ export default function CheckoutPage() {
     );
   }
 
-  // Écran de paiement en cours
   if (paymentProcessing) {
     return (
       <main className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
@@ -371,22 +499,22 @@ export default function CheckoutPage() {
             Traitement en cours...
           </h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">
-            Validation de votre paiement {paymentMethod === "airtel" ? "Airtel Money" : "MTN Mobile Money"}.
+            Validation de votre paiement{" "}
+            {paymentMethod === "airtel" ? "Airtel Money" : "MTN Mobile Money"}.
           </p>
-          <p className="text-gray-400 text-xs mt-1">
-            Ne fermez pas cette page.
-          </p>
+          <p className="text-gray-400 text-xs mt-1">Ne fermez pas cette page.</p>
           <div className="mt-6">
             <div className="w-10 h-10 border-4 border-[#00572D] border-t-transparent rounded-full animate-spin mx-auto" />
           </div>
-          <p className="text-xs text-gray-400 mt-4">
-            📞 {paymentPhone}
-          </p>
+          <p className="text-xs text-gray-400 mt-4">📞 {paymentPhone}</p>
         </div>
       </main>
     );
   }
 
+  // ============================================================
+  // PAGE PRINCIPALE
+  // ============================================================
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-32">
       <div className="max-w-lg mx-auto px-4 pt-6">
@@ -399,8 +527,6 @@ export default function CheckoutPage() {
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
             Étape {step} sur 3
           </p>
-
-          {/* Progress bar */}
           <div className="flex gap-2 mt-3">
             {[1, 2, 3].map((s) => (
               <div
@@ -459,12 +585,9 @@ export default function CheckoutPage() {
               </div>
             ))}
 
-            {/* Type de réception */}
+            {/* Mode de réception */}
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-              <p className="font-bold text-sm mb-3 dark:text-white">
-                🚚 Mode de réception
-              </p>
-
+              <p className="font-bold text-sm mb-3 dark:text-white">🚚 Mode de réception</p>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setDeliveryType("delivery")}
@@ -499,16 +622,15 @@ export default function CheckoutPage() {
               </div>
 
               {deliveryType === "delivery" && (
-                <>
-                  <div className="flex justify-between text-sm mt-2">
-                    <span className="text-gray-500 dark:text-gray-400">
-                      Livraison ({estimatedDistance} km × {pharmacyGroups.length} pharmacie{pharmacyGroups.length > 1 ? "s" : ""})
-                    </span>
-                    <span className="font-bold dark:text-white">
-                      {totalDeliveryFees.toLocaleString()} FCFA
-                    </span>
-                  </div>
-                </>
+                <div className="flex justify-between text-sm mt-2">
+                  <span className="text-gray-500 dark:text-gray-400">
+                    Livraison ({estimatedDistance} km × {pharmacyGroups.length}{" "}
+                    pharmacie{pharmacyGroups.length > 1 ? "s" : ""})
+                  </span>
+                  <span className="font-bold dark:text-white">
+                    {totalDeliveryFees.toLocaleString()} FCFA
+                  </span>
+                </div>
               )}
 
               <div className="flex justify-between text-lg font-bold mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
@@ -517,6 +639,17 @@ export default function CheckoutPage() {
                   {grandTotal.toLocaleString()} FCFA
                 </span>
               </div>
+            </div>
+
+            {/* Info escrow */}
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3">
+              <p className="text-xs font-bold text-blue-700 dark:text-blue-400 mb-1">
+                🔐 Paiement sécurisé KISI
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                La pharmacie sera payée immédiatement. Les frais de livraison seront
+                versés au livreur uniquement après votre confirmation de réception.
+              </p>
             </div>
 
             <button
@@ -611,7 +744,6 @@ export default function CheckoutPage() {
                     />
                   </div>
 
-                  {/* Géolocalisation */}
                   <button
                     onClick={requestLocation}
                     className="w-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 p-3 rounded-xl text-sm font-semibold"
@@ -636,9 +768,7 @@ export default function CheckoutPage() {
                 ← Retour
               </button>
               <button
-                onClick={() => {
-                  if (validateAddress()) setStep(3);
-                }}
+                onClick={() => { if (validateAddress()) setStep(3); }}
                 className="flex-1 bg-[#00572D] text-white p-3 rounded-xl font-bold text-sm"
               >
                 Continuer →
@@ -654,12 +784,11 @@ export default function CheckoutPage() {
               💳 Paiement Mobile Money
             </h2>
 
-            {/* Choix du provider */}
+            {/* Opérateur */}
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
               <p className="font-bold text-sm mb-3 dark:text-white">
                 Choisissez votre opérateur
               </p>
-
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setPaymentMethod("airtel")}
@@ -700,49 +829,61 @@ export default function CheckoutPage() {
               />
             </div>
 
-            {/* Récapitulatif final */}
+            {/* Récapitulatif */}
             <div className="bg-[#00572D] rounded-2xl p-4 text-white">
               <h3 className="font-bold text-sm mb-3">📋 Récapitulatif final</h3>
-
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-green-200">Médicaments</span>
                   <span className="font-bold">{totalAmount.toLocaleString()} FCFA</span>
                 </div>
-
                 {deliveryType === "delivery" && (
                   <div className="flex justify-between">
-                    <span className="text-green-200">Livraison</span>
+                    <span className="text-green-200">Livraison (escrow 🔒)</span>
                     <span className="font-bold">{totalDeliveryFees.toLocaleString()} FCFA</span>
                   </div>
                 )}
-
                 <div className="flex justify-between text-lg font-bold pt-2 border-t border-green-600">
                   <span>Total à payer</span>
                   <span>{grandTotal.toLocaleString()} FCFA</span>
                 </div>
               </div>
 
-              <div className="mt-3 pt-3 border-t border-green-600">
+              <div className="mt-3 pt-3 border-t border-green-600 space-y-1">
                 <p className="text-xs text-green-200">
                   👤 {address.full_name} · 📞 {address.phone}
                 </p>
                 {deliveryType === "delivery" && (
-                  <p className="text-xs text-green-200 mt-1">
+                  <p className="text-xs text-green-200">
                     📍 {address.address_line}, {address.district} · {address.city}
                   </p>
                 )}
-                <p className="text-xs text-green-200 mt-1">
+                <p className="text-xs text-green-200">
                   💳 {paymentMethod === "airtel" ? "Airtel Money" : "MTN MoMo"} · {paymentPhone}
                 </p>
               </div>
             </div>
 
-            {/* Info prototype */}
+            {/* Explication escrow */}
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 space-y-1">
+              <p className="text-xs font-bold text-blue-700 dark:text-blue-400">
+                🔐 Comment fonctionne le paiement sécurisé ?
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                💊 La pharmacie reçoit le paiement des médicaments immédiatement.
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                🔒 Les frais de livraison sont conservés par KISI.
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                ✅ Le livreur est payé après votre confirmation de réception.
+              </p>
+            </div>
+
+            {/* Prototype */}
             <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3">
               <p className="text-xs text-yellow-700 dark:text-yellow-400 text-center">
-                ⚠️ Mode prototype — Le paiement est simulé.
-                Aucun montant réel ne sera débité.
+                ⚠️ Mode prototype — Le paiement est simulé. Aucun montant réel ne sera débité.
               </p>
             </div>
 
