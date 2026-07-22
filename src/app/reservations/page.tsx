@@ -57,44 +57,65 @@ function getProgressIndex(status: string) {
 }
 
 // =====================================================
-// UTILITAIRES ESCROW
+// UTILITAIRES ESCROW — VERSION ROBUSTE
 // =====================================================
 async function getOrCreateWallet(
   ownerId: string,
   ownerType: "pharmacy" | "driver" | "kisi"
-): Promise<string> {
-  const { data: existing } = await supabase
-    .from("wallets")
-    .select("id")
-    .eq("owner_id", ownerId)
-    .eq("owner_type", ownerType)
-    .maybeSingle();
+): Promise<string | null> {
+  try {
+    // Chercher d'abord
+    const { data: existing } = await supabase
+      .from("wallets")
+      .select("id")
+      .eq("owner_id", ownerId)
+      .eq("owner_type", ownerType)
+      .maybeSingle();
 
-  if (existing) return existing.id;
+    if (existing?.id) return existing.id;
 
-  const { data: created } = await supabase
-    .from("wallets")
-    .insert({ owner_id: ownerId, owner_type: ownerType, balance: 0 })
-    .select("id")
-    .single();
+    // Créer si inexistant
+    const { data: created, error: createError } = await supabase
+      .from("wallets")
+      .insert({
+        owner_id: ownerId,
+        owner_type: ownerType,
+        balance: 0,
+        total_received: 0,
+      })
+      .select("id")
+      .single();
 
-  return created!.id;
+    if (createError || !created?.id) {
+      console.error("getOrCreateWallet create error:", createError?.message);
+      return null;
+    }
+
+    return created.id;
+  } catch (err) {
+    console.error("getOrCreateWallet exception:", err);
+    return null;
+  }
 }
 
 async function creditWallet(walletId: string, amount: number) {
-  const { data: wallet } = await supabase
-    .from("wallets")
-    .select("balance, total_received")
-    .eq("id", walletId)
-    .single();
+  try {
+    const { data: wallet } = await supabase
+      .from("wallets")
+      .select("balance, total_received")
+      .eq("id", walletId)
+      .single();
 
-  if (!wallet) return;
+    if (!wallet) return;
 
-  await supabase.from("wallets").update({
-    balance: Number(wallet.balance) + amount,
-    total_received: Number(wallet.total_received) + amount,
-    updated_at: new Date().toISOString(),
-  }).eq("id", walletId);
+    await supabase.from("wallets").update({
+      balance: Number(wallet.balance || 0) + amount,
+      total_received: Number(wallet.total_received || 0) + amount,
+      updated_at: new Date().toISOString(),
+    }).eq("id", walletId);
+  } catch (err) {
+    console.error("creditWallet error:", err);
+  }
 }
 
 // =====================================================
@@ -234,21 +255,18 @@ export default function ReservationsPage() {
   }
 
   // =====================================================
-  // ✅ CONFIRMER LA LIVRAISON — CORRIGÉ
+  // ✅ CONFIRMER LA LIVRAISON — VERSION ROBUSTE
   // =====================================================
   async function confirmDelivery(orderId: string) {
-    if (!currentUser) return;
+    if (!currentUser?.id) {
+      showToast("Utilisateur non connecté", "error");
+      return;
+    }
+
     setConfirming(true);
 
     try {
-      // 1. Récupérer l'escrow
-      const { data: escrow } = await supabase
-        .from("escrow_accounts")
-        .select("*")
-        .eq("order_id", orderId)
-        .maybeSingle();
-
-      // 2. Récupérer la commande SANS join pour éviter les erreurs null
+      // 1. Récupérer la commande SANS join
       const { data: order, error: orderError } = await supabase
         .from("orders")
         .select("*")
@@ -256,10 +274,17 @@ export default function ReservationsPage() {
         .single();
 
       if (orderError || !order) {
-        throw new Error("Commande introuvable");
+        throw new Error("Commande introuvable : " + orderError?.message);
       }
 
-      // 3. Libérer l'escrow si existant ET si livreur assigné
+      // 2. Récupérer l'escrow
+      const { data: escrow } = await supabase
+        .from("escrow_accounts")
+        .select("*")
+        .eq("order_id", orderId)
+        .maybeSingle();
+
+      // 3. Traitement escrow si existant
       if (escrow && escrow.status === "held" && order.driver_id) {
         const driverProfileId = order.driver_id;
 
@@ -268,13 +293,23 @@ export default function ReservationsPage() {
           .from("driver_profiles")
           .select("id, user_id, total_earnings, total_deliveries")
           .eq("id", driverProfileId)
-          .single();
-
-        const driverUserId = driverData?.user_id || null;
+          .maybeSingle();
 
         // Wallet livreur
         const driverWalletId = await getOrCreateWallet(driverProfileId, "driver");
-        await creditWallet(driverWalletId, escrow.driver_amount);
+
+        if (driverWalletId && escrow.driver_amount > 0) {
+          await creditWallet(driverWalletId, escrow.driver_amount);
+
+          await supabase.from("financial_transactions").insert({
+            order_id: orderId,
+            type: "escrow_release",
+            to_wallet_id: driverWalletId,
+            amount: escrow.driver_amount,
+            status: "completed",
+            description: "Gain livraison libéré au livreur",
+          });
+        }
 
         // Wallet KISI
         const { data: kisiWallet } = await supabase
@@ -283,28 +318,17 @@ export default function ReservationsPage() {
           .eq("owner_type", "kisi")
           .maybeSingle();
 
-        if (kisiWallet?.id) {
+        if (kisiWallet?.id && escrow.commission_amount > 0) {
           await creditWallet(kisiWallet.id, escrow.commission_amount);
-        }
 
-        // Transactions financières
-        await supabase.from("financial_transactions").insert([
-          {
-            order_id: orderId,
-            type: "escrow_release",
-            to_wallet_id: driverWalletId,
-            amount: escrow.driver_amount,
-            status: "completed",
-            description: "Gain livraison libéré au livreur",
-          },
-          {
+          await supabase.from("financial_transactions").insert({
             order_id: orderId,
             type: "kisi_commission",
             amount: escrow.commission_amount,
             status: "completed",
             description: "Commission KISI",
-          },
-        ]);
+          });
+        }
 
         // Libérer l'escrow
         await supabase.from("escrow_accounts").update({
@@ -312,24 +336,23 @@ export default function ReservationsPage() {
           released_at: new Date().toISOString(),
         }).eq("order_id", orderId);
 
-        // Mettre à jour les gains du livreur
-        const currentEarnings = Number(driverData?.total_earnings || 0);
-        const currentDeliveries = Number(driverData?.total_deliveries || 0);
+        // Gains livreur
+        if (driverData?.id) {
+          await supabase.from("driver_profiles").update({
+            total_earnings: Number(driverData.total_earnings || 0) + Number(escrow.driver_amount || 0),
+            total_deliveries: Number(driverData.total_deliveries || 0) + 1,
+          }).eq("id", driverProfileId);
 
-        await supabase.from("driver_profiles").update({
-          total_earnings: currentEarnings + escrow.driver_amount,
-          total_deliveries: currentDeliveries + 1,
-        }).eq("id", driverProfileId);
-
-        // Notification livreur
-        if (driverUserId) {
-          await supabase.from("notifications").insert({
-            user_id: driverUserId,
-            type: "payment",
-            title: "Paiement reçu 💰",
-            body: `${escrow.driver_amount.toLocaleString()} FCFA ont été ajoutés à votre portefeuille. Merci pour votre livraison !`,
-            order_id: orderId,
-          });
+          // Notification livreur
+          if (driverData.user_id) {
+            await supabase.from("notifications").insert({
+              user_id: driverData.user_id,
+              type: "payment",
+              title: "Paiement reçu 💰",
+              body: `${Number(escrow.driver_amount || 0).toLocaleString()} FCFA ont été ajoutés à votre portefeuille. Merci pour votre livraison !`,
+              order_id: orderId,
+            });
+          }
         }
       }
 
@@ -350,7 +373,7 @@ export default function ReservationsPage() {
             .eq("pharmacy_id", item.pharmacy_id)
             .maybeSingle();
 
-          if (stock && stock.quantity >= item.quantity) {
+          if (stock?.id && stock.quantity >= item.quantity) {
             await supabase
               .from("stock")
               .update({ quantity: stock.quantity - item.quantity })
@@ -360,13 +383,16 @@ export default function ReservationsPage() {
       }
 
       // 5. Mettre à jour la commande → delivered
-      const { error: updateError } = await supabase.from("orders").update({
-        status: "delivered",
-        escrow_status: escrow ? "released" : order.escrow_status,
-        client_confirmed: true,
-        client_confirmed_at: new Date().toISOString(),
-        delivered_at: new Date().toISOString(),
-      }).eq("id", orderId);
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update({
+          status: "delivered",
+          escrow_status: escrow ? "released" : (order.escrow_status || "released"),
+          client_confirmed: true,
+          client_confirmed_at: new Date().toISOString(),
+          delivered_at: new Date().toISOString(),
+        })
+        .eq("id", orderId);
 
       if (updateError) {
         throw new Error("Erreur mise à jour commande : " + updateError.message);
@@ -396,14 +422,14 @@ export default function ReservationsPage() {
           .from("pharmacies")
           .select("user_id")
           .eq("id", order.pharmacy_id)
-          .single();
+          .maybeSingle();
 
         if (pharmacy?.user_id) {
           await supabase.from("notifications").insert({
             user_id: pharmacy.user_id,
             type: "order_update",
             title: "Commande livrée 🎉",
-            body: "La commande a été livrée et confirmée par le client. Elle est maintenant dans votre historique.",
+            body: "La commande a été livrée et confirmée par le client.",
             order_id: orderId,
           });
         }
@@ -574,7 +600,9 @@ export default function ReservationsPage() {
             const cfg = getStatusConfig(item.status);
             const isOrder = item._type === "order";
             const progressIdx = isOrder ? getProgressIndex(item.status) : -1;
-            const needsConfirmation = isOrder && CONFIRMABLE_STATUSES.includes(item.status) && !item.client_confirmed;
+            const needsConfirmation = isOrder &&
+              CONFIRMABLE_STATUSES.includes(item.status) &&
+              !item.client_confirmed;
 
             return (
               <button
@@ -608,7 +636,11 @@ export default function ReservationsPage() {
                 <div className="p-4">
                   <div className="flex items-center gap-2 mb-2">
                     {item.pharmacies?.logo_url && (
-                      <img src={item.pharmacies.logo_url} alt={item.pharmacies.name} className="w-8 h-8 rounded-full object-cover border border-gray-100" />
+                      <img
+                        src={item.pharmacies.logo_url}
+                        alt={item.pharmacies.name}
+                        className="w-8 h-8 rounded-full object-cover border border-gray-100"
+                      />
                     )}
                     <div>
                       <p className="font-bold text-sm dark:text-white">
@@ -623,12 +655,20 @@ export default function ReservationsPage() {
                   {!isOrder && item.medicines && (
                     <div className="flex items-center gap-3 mt-2">
                       {item.medicines.image_url && (
-                        <img src={item.medicines.image_url} alt={item.medicines.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
+                        <img
+                          src={item.medicines.image_url}
+                          alt={item.medicines.name}
+                          className="w-10 h-10 rounded-full object-cover border border-gray-200"
+                        />
                       )}
                       <div>
-                        <p className="text-sm font-medium dark:text-white">💊 {item.medicines.name}</p>
+                        <p className="text-sm font-medium dark:text-white">
+                          💊 {item.medicines.name}
+                        </p>
                         {item.medicines.description && (
-                          <p className="text-xs text-gray-400 line-clamp-1">{item.medicines.description}</p>
+                          <p className="text-xs text-gray-400 line-clamp-1">
+                            {item.medicines.description}
+                          </p>
                         )}
                       </div>
                     </div>
@@ -658,7 +698,9 @@ export default function ReservationsPage() {
                             <div
                               key={idx}
                               className={`flex-1 h-1 rounded-full transition-all ${
-                                idx <= progressIdx ? "bg-[#00572D]" : "bg-gray-200 dark:bg-gray-700"
+                                idx <= progressIdx
+                                  ? "bg-[#00572D]"
+                                  : "bg-gray-200 dark:bg-gray-700"
                               }`}
                             />
                           ))}
@@ -702,7 +744,7 @@ export default function ReservationsPage() {
               </button>
             </div>
 
-            {/* Contenu scrollable */}
+            {/* Contenu */}
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
 
               {/* Statut */}
@@ -718,37 +760,43 @@ export default function ReservationsPage() {
               })()}
 
               {/* Barre progression */}
-              {selectedType === "order" && getProgressIndex(selectedItem.status) >= 0 && selectedItem.status !== "cancelled" && (
-                <div className="space-y-1">
-                  <div className="flex gap-1">
-                    {ORDER_STEPS.map((step, idx) => {
-                      const currentIdx = getProgressIndex(selectedItem.status);
-                      return (
-                        <div
-                          key={step}
-                          className={`flex-1 h-2 rounded-full transition-all ${
-                            idx <= currentIdx ? "bg-[#00572D]" : "bg-gray-200 dark:bg-gray-700"
-                          }`}
-                        />
-                      );
-                    })}
+              {selectedType === "order" &&
+                getProgressIndex(selectedItem.status) >= 0 &&
+                selectedItem.status !== "cancelled" && (
+                  <div className="space-y-1">
+                    <div className="flex gap-1">
+                      {ORDER_STEPS.map((step, idx) => {
+                        const currentIdx = getProgressIndex(selectedItem.status);
+                        return (
+                          <div
+                            key={step}
+                            className={`flex-1 h-2 rounded-full transition-all ${
+                              idx <= currentIdx ? "bg-[#00572D]" : "bg-gray-200 dark:bg-gray-700"
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="flex justify-between text-[9px] text-gray-400">
+                      <span>Reçue</span>
+                      <span>Prépa</span>
+                      <span>Prête</span>
+                      <span>Livreur</span>
+                      <span>Récupéré</span>
+                      <span>Route</span>
+                      <span>Livré</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between text-[9px] text-gray-400">
-                    <span>Reçue</span>
-                    <span>Prépa</span>
-                    <span>Prête</span>
-                    <span>Livreur</span>
-                    <span>Récupéré</span>
-                    <span>Route</span>
-                    <span>Livré</span>
-                  </div>
-                </div>
-              )}
+                )}
 
               {/* Pharmacie */}
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 flex items-center gap-3">
                 {selectedItem.pharmacies?.logo_url && (
-                  <img src={selectedItem.pharmacies.logo_url} alt={selectedItem.pharmacies.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
+                  <img
+                    src={selectedItem.pharmacies.logo_url}
+                    alt={selectedItem.pharmacies.name}
+                    className="w-10 h-10 rounded-full object-cover border border-gray-200"
+                  />
                 )}
                 <div>
                   <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
@@ -766,12 +814,18 @@ export default function ReservationsPage() {
                   <p className="font-bold text-sm mb-2 dark:text-white">💊 Médicament</p>
                   <div className="flex items-start gap-3">
                     {selectedItem.medicines.image_url && (
-                      <img src={selectedItem.medicines.image_url} alt={selectedItem.medicines.name} className="w-14 h-14 rounded-full object-cover border-2 border-[#00572D]/20" />
+                      <img
+                        src={selectedItem.medicines.image_url}
+                        alt={selectedItem.medicines.name}
+                        className="w-14 h-14 rounded-full object-cover border-2 border-[#00572D]/20"
+                      />
                     )}
                     <div>
                       <p className="font-bold text-sm dark:text-white">{selectedItem.medicines.name}</p>
                       {selectedItem.medicines.description && (
-                        <p className="text-xs text-gray-400 mt-1 leading-relaxed">{selectedItem.medicines.description}</p>
+                        <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                          {selectedItem.medicines.description}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -784,10 +838,17 @@ export default function ReservationsPage() {
                   <p className="font-bold text-sm mb-2 dark:text-white">💊 Produits</p>
                   <div className="space-y-2">
                     {orderItems.map((oi) => (
-                      <div key={oi.id} className="flex justify-between items-center bg-gray-50 dark:bg-gray-800 p-3 rounded-xl">
+                      <div
+                        key={oi.id}
+                        className="flex justify-between items-center bg-gray-50 dark:bg-gray-800 p-3 rounded-xl"
+                      >
                         <div className="flex items-center gap-2">
                           {oi.medicine_image_url && (
-                            <img src={oi.medicine_image_url} alt={oi.medicine_name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
+                            <img
+                              src={oi.medicine_image_url}
+                              alt={oi.medicine_name}
+                              className="w-10 h-10 rounded-full object-cover border border-gray-200"
+                            />
                           )}
                           <div>
                             <p className="text-sm font-medium dark:text-white">{oi.medicine_name}</p>
@@ -816,10 +877,15 @@ export default function ReservationsPage() {
                     <div className="flex justify-between text-sm">
                       <span className="text-green-200">
                         Livraison{" "}
-                        {selectedItem.escrow_status === "held" ? "🔒" :
-                         selectedItem.escrow_status === "released" ? "✅" : ""}
+                        {selectedItem.escrow_status === "held"
+                          ? "🔒"
+                          : selectedItem.escrow_status === "released"
+                          ? "✅"
+                          : ""}
                       </span>
-                      <span className="font-bold">{(selectedItem.delivery_fee || 0).toLocaleString()} FCFA</span>
+                      <span className="font-bold">
+                        {(selectedItem.delivery_fee || 0).toLocaleString()} FCFA
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between text-lg font-bold pt-2 border-t border-green-600">
@@ -828,9 +894,12 @@ export default function ReservationsPage() {
                   </div>
                   {selectedItem.delivery_fee > 0 && (
                     <div className="bg-white/10 rounded-xl p-2 text-xs text-center">
-                      {selectedItem.escrow_status === "held" && "🔒 Frais de livraison sécurisés — libérés à votre confirmation"}
-                      {selectedItem.escrow_status === "released" && "✅ Frais de livraison versés au livreur"}
-                      {selectedItem.escrow_status === "disputed" && "⚠️ Litige en cours — Fonds bloqués"}
+                      {selectedItem.escrow_status === "held" &&
+                        "🔒 Frais de livraison sécurisés — libérés à votre confirmation"}
+                      {selectedItem.escrow_status === "released" &&
+                        "✅ Frais de livraison versés au livreur"}
+                      {selectedItem.escrow_status === "disputed" &&
+                        "⚠️ Litige en cours — Fonds bloqués"}
                     </div>
                   )}
                 </div>
@@ -859,7 +928,11 @@ export default function ReservationsPage() {
                   <p className="font-bold text-sm mb-2 dark:text-white">🏍️ Livreur</p>
                   <div className="flex items-center gap-3">
                     {driverProfile.photo_url ? (
-                      <img src={driverProfile.photo_url} alt={driverProfile.full_name} className="w-12 h-12 rounded-full object-cover border-2 border-[#00572D]" />
+                      <img
+                        src={driverProfile.photo_url}
+                        alt={driverProfile.full_name}
+                        className="w-12 h-12 rounded-full object-cover border-2 border-[#00572D]"
+                      />
                     ) : (
                       <div className="w-12 h-12 rounded-full bg-[#00572D] flex items-center justify-center text-white text-lg font-bold">
                         {driverProfile.full_name?.charAt(0) || "?"}
@@ -870,7 +943,8 @@ export default function ReservationsPage() {
                       <p className="text-xs text-gray-400">📞 {driverProfile.phone}</p>
                       {driverProfile.vehicle_type && (
                         <p className="text-xs text-gray-400">
-                          🏍️ {driverProfile.vehicle_type} {driverProfile.vehicle_brand || ""} {driverProfile.vehicle_plate || ""}
+                          🏍️ {driverProfile.vehicle_type} {driverProfile.vehicle_brand || ""}{" "}
+                          {driverProfile.vehicle_plate || ""}
                         </p>
                       )}
                       {driverProfile.rating && (
@@ -899,7 +973,9 @@ export default function ReservationsPage() {
               {/* Code OTP */}
               {selectedType === "order" &&
                 selectedItem.pickup_otp &&
-                ["ready", "driver_assigned", "driver_arrived_at_pharmacy"].includes(selectedItem.status) && (
+                ["ready", "driver_assigned", "driver_arrived_at_pharmacy"].includes(
+                  selectedItem.status
+                ) && (
                   <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3 text-center">
                     <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1 font-semibold">
                       🔐 Code de remise pharmacie → livreur
@@ -918,19 +994,25 @@ export default function ReservationsPage() {
                 <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
                   <p className="font-bold text-sm mb-1 dark:text-white">💳 Paiement</p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {selectedItem.payment_provider === "airtel" ? "Airtel Money" :
-                     selectedItem.payment_provider === "mtn" ? "MTN MoMo" : "Mobile Money"}
+                    {selectedItem.payment_provider === "airtel"
+                      ? "Airtel Money"
+                      : selectedItem.payment_provider === "mtn"
+                      ? "MTN MoMo"
+                      : "Mobile Money"}
                   </p>
-                  <p className={`text-xs font-bold mt-1 ${
-                    selectedItem.payment_status === "paid"
-                      ? "text-green-600 dark:text-green-400"
-                      : "text-yellow-600 dark:text-yellow-400"
-                  }`}>
+                  <p
+                    className={`text-xs font-bold mt-1 ${
+                      selectedItem.payment_status === "paid"
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-yellow-600 dark:text-yellow-400"
+                    }`}
+                  >
                     {selectedItem.payment_status === "paid" ? "✅ Payé" : "⏳ En attente"}
                   </p>
                   {selectedItem.pharmacy_paid && (
                     <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
-                      ✅ Pharmacie payée : {(selectedItem.pharmacy_payment_amount || 0).toLocaleString()} FCFA
+                      ✅ Pharmacie payée :{" "}
+                      {(selectedItem.pharmacy_payment_amount || 0).toLocaleString()} FCFA
                     </p>
                   )}
                 </div>
@@ -980,7 +1062,8 @@ export default function ReservationsPage() {
                   </p>
                   {selectedItem.client_confirmed_at && (
                     <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                      Le {new Date(selectedItem.client_confirmed_at).toLocaleDateString("fr-FR", {
+                      Le{" "}
+                      {new Date(selectedItem.client_confirmed_at).toLocaleDateString("fr-FR", {
                         day: "numeric",
                         month: "long",
                         hour: "2-digit",
@@ -1046,7 +1129,10 @@ export default function ReservationsPage() {
 
             <div className="flex gap-3">
               <button
-                onClick={() => { setShowDisputeModal(false); setDisputeReason(""); }}
+                onClick={() => {
+                  setShowDisputeModal(false);
+                  setDisputeReason("");
+                }}
                 className="flex-1 bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm"
               >
                 Annuler
