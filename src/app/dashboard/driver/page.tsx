@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ToastProviderTemp";
 
 const STATUS_CONFIG: Record<string, { label: string; emoji: string; color: string; bg: string }> = {
-  payment_confirmed: { label: "Paiement confirmé", emoji: "✅", color: "text-green-600", bg: "bg-green-50 dark:bg-green-900/20" },
-  preparing: { label: "Préparation", emoji: "📦", color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/20" },
-  ready: { label: "Prête", emoji: "🎁", color: "text-purple-600", bg: "bg-purple-50 dark:bg-purple-900/20" },
-  driver_assigned: { label: "Vous êtes affecté", emoji: "🏍️", color: "text-indigo-600", bg: "bg-indigo-50 dark:bg-indigo-900/20" },
-  driver_arrived_at_pharmacy: { label: "Arrivé à la pharmacie", emoji: "🏥", color: "text-indigo-600", bg: "bg-indigo-50 dark:bg-indigo-900/20" },
-  picked_up: { label: "Récupérée", emoji: "📬", color: "text-orange-600", bg: "bg-orange-50 dark:bg-orange-900/20" },
+  payment_confirmed: { label: "Commande reçue", emoji: "🆕", color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/20" },
+  preparing: { label: "Préparation en cours", emoji: "📦", color: "text-orange-600", bg: "bg-orange-50 dark:bg-orange-900/20" },
+  ready: { label: "Prête à récupérer", emoji: "🎁", color: "text-purple-600", bg: "bg-purple-50 dark:bg-purple-900/20" },
+  driver_assigned: { label: "Mission acceptée", emoji: "🏍️", color: "text-indigo-600", bg: "bg-indigo-50 dark:bg-indigo-900/20" },
+  driver_arrived_at_pharmacy: { label: "À la pharmacie", emoji: "🏥", color: "text-indigo-600", bg: "bg-indigo-50 dark:bg-indigo-900/20" },
+  picked_up: { label: "Colis récupéré", emoji: "📬", color: "text-orange-600", bg: "bg-orange-50 dark:bg-orange-900/20" },
   on_the_way: { label: "En route", emoji: "🚀", color: "text-orange-600", bg: "bg-orange-50 dark:bg-orange-900/20" },
   driver_arrived: { label: "Arrivé chez le client", emoji: "📍", color: "text-teal-600", bg: "bg-teal-50 dark:bg-teal-900/20" },
   delivered: { label: "Livrée", emoji: "🎉", color: "text-green-700", bg: "bg-green-100 dark:bg-green-900/30" },
@@ -113,6 +113,9 @@ export default function DriverDashboard() {
 
     refreshIntervalRef.current = setInterval(() => {
       loadAvailableMissions();
+      if (driverProfileRef.current) {
+        loadActiveMission(driverProfileRef.current.id);
+      }
     }, 30000);
   }
 
@@ -143,7 +146,13 @@ export default function DriverDashboard() {
       .from("orders")
       .select("*, pharmacies(name, city, logo_url, phone), addresses(*)")
       .eq("driver_id", driverId)
-      .in("status", ["driver_assigned", "driver_arrived_at_pharmacy", "picked_up", "on_the_way", "driver_arrived"])
+      .in("status", [
+        "driver_assigned",
+        "driver_arrived_at_pharmacy",
+        "picked_up",
+        "on_the_way",
+        "driver_arrived",
+      ])
       .maybeSingle();
 
     if (data) {
@@ -253,7 +262,7 @@ export default function DriverDashboard() {
 
     setUpdating(true);
 
-    const { error } = await supabase
+    const { data: updatedOrder, error } = await supabase
       .from("orders")
       .update({
         driver_id: dp.id,
@@ -262,16 +271,18 @@ export default function DriverDashboard() {
       })
       .eq("id", orderId)
       .eq("status", "ready")
-      .is("driver_id", null);
+      .is("driver_id", null)
+      .select("*, pharmacies(name, city, logo_url, phone), addresses(*)")
+      .single();
 
-    if (error) {
+    if (error || !updatedOrder) {
       showToast("Cette mission n'est plus disponible", "error");
       setUpdating(false);
       await loadAvailableMissions();
       return;
     }
 
-    // Événement de livraison
+    // Événement
     await supabase.from("delivery_events").insert({
       order_id: orderId,
       actor_type: "driver",
@@ -281,27 +292,36 @@ export default function DriverDashboard() {
     });
 
     // Notification client
-    const order = availableMissions.find((o) => o.id === orderId);
-    if (order?.user_id) {
+    if (updatedOrder.user_id) {
       await supabase.from("notifications").insert({
-        user_id: order.user_id,
+        user_id: updatedOrder.user_id,
         type: "delivery",
         title: "Livreur affecté 🏍️",
-        body: `${dp.full_name} va récupérer votre commande.`,
+        body: `${dp.full_name} va récupérer votre commande. Code de remise : ${updatedOrder.pickup_otp}`,
         order_id: orderId,
       });
     }
 
-    // ✅ Charger la mission active AVANT de changer d'onglet
-    await loadActiveMission(dp.id);
-    await loadAvailableMissions();
+    // ✅ Mettre directement la mission active sans recharger
+    setActiveMission(updatedOrder);
+    setActiveMissionAddress(updatedOrder.addresses);
+
+    // Charger les items
+    const { data: items } = await supabase
+      .from("order_items")
+      .select("*")
+      .eq("order_id", orderId);
+
+    setActiveMissionItems(items || []);
+
+    // Retirer de la liste des missions disponibles
+    setAvailableMissions(prev => prev.filter(m => m.id !== orderId));
 
     setUpdating(false);
     startGPS();
-
     showToast("Mission acceptée ! 🏍️");
 
-    // ✅ Basculer sur l'onglet En cours
+    // ✅ Basculer immédiatement sur l'onglet En cours
     setTab("active");
   }
 
@@ -312,14 +332,20 @@ export default function DriverDashboard() {
 
     const updateData: any = { status: newStatus };
     if (newStatus === "picked_up") updateData.picked_up_at = new Date().toISOString();
-    if (newStatus === "delivered") updateData.delivered_at = new Date().toISOString();
+    if (newStatus === "on_the_way") updateData.picked_up_at = activeMission.picked_up_at || new Date().toISOString();
 
-    const { error } = await supabase
+    const { data: updatedOrder, error } = await supabase
       .from("orders")
       .update(updateData)
-      .eq("id", activeMission.id);
+      .eq("id", activeMission.id)
+      .select("*, pharmacies(name, city, logo_url, phone), addresses(*)")
+      .single();
 
-    if (error) { showToast(error.message, "error"); setUpdating(false); return; }
+    if (error) {
+      showToast(error.message, "error");
+      setUpdating(false);
+      return;
+    }
 
     const cfg = getStatusConfig(newStatus);
 
@@ -331,64 +357,74 @@ export default function DriverDashboard() {
       label: cfg.label,
     });
 
-    let notifTitle = "";
-    let notifBody = "";
+    // Notifications client
+    const notifs: Record<string, { title: string; body: string }> = {
+      driver_arrived_at_pharmacy: {
+        title: "Livreur à la pharmacie 🏥",
+        body: "Le livreur est arrivé à la pharmacie pour récupérer votre commande.",
+      },
+      picked_up: {
+        title: "Commande récupérée 📬",
+        body: "Le livreur a récupéré votre commande. La livraison va commencer.",
+      },
+      on_the_way: {
+        title: "En route 🚀",
+        body: "Le livreur est en route vers vous !",
+      },
+      driver_arrived: {
+        title: "Livreur arrivé 📍",
+        body: "Le livreur est arrivé à votre adresse. Préparez-vous à recevoir votre commande.",
+      },
+    };
 
-    switch (newStatus) {
-      case "driver_arrived_at_pharmacy":
-        notifTitle = "Livreur à la pharmacie 🏥";
-        notifBody = "Le livreur est arrivé à la pharmacie.";
-        break;
-      case "on_the_way":
-        notifTitle = "Commande en route 🚀";
-        notifBody = "Le livreur est en route vers vous.";
-        break;
-      case "driver_arrived":
-        notifTitle = "Livreur arrivé 📍";
-        notifBody = "Le livreur est arrivé à votre adresse.";
-        break;
-      case "delivered":
-        notifTitle = "Livraison effectuée 🎉";
-        notifBody = "Votre médicament a été livré. Merci d'avoir utilisé KISI !";
-        break;
-    }
-
-    if (notifTitle) {
+    if (notifs[newStatus]) {
       await supabase.from("notifications").insert({
         user_id: activeMission.user_id,
         type: "delivery",
-        title: notifTitle,
-        body: notifBody,
+        title: notifs[newStatus].title,
+        body: notifs[newStatus].body,
         order_id: activeMission.id,
       });
     }
 
-    if (newStatus === "delivered") {
-      showToast("Livraison terminée ! 🎉");
-      await loadHistory(dp.id);
-      setActiveMission(null);
-      setTab("missions");
-    } else {
-      showToast(`Statut mis à jour : ${cfg.label}`);
-      await loadActiveMission(dp.id);
+    // ✅ Mettre à jour directement sans recharger
+    if (updatedOrder) {
+      setActiveMission(updatedOrder);
+      setActiveMissionAddress(updatedOrder.addresses);
     }
 
+    showToast(`${cfg.emoji} ${cfg.label}`);
     setUpdating(false);
   }
 
+  // ✅ Nouvelle logique des actions selon le flux
   function getMissionActions(): { label: string; emoji: string; status: string; color: string }[] {
     if (!activeMission) return [];
+
     switch (activeMission.status) {
       case "driver_assigned":
-        return [{ label: "Arrivé à la pharmacie", emoji: "🏥", status: "driver_arrived_at_pharmacy", color: "bg-indigo-600" }];
+        return [
+          { label: "Je suis arrivé à la pharmacie", emoji: "🏥", status: "driver_arrived_at_pharmacy", color: "bg-indigo-600" },
+        ];
       case "driver_arrived_at_pharmacy":
-        return [];
+        // ✅ Si OTP vérifié → peut continuer. Sinon → afficher le code, attendre la pharmacie
+        if (activeMission.pickup_otp_verified) {
+          return [
+            { label: "J'ai récupéré le colis", emoji: "📬", status: "picked_up", color: "bg-orange-600" },
+          ];
+        }
+        return []; // Attendre que la pharmacie valide
       case "picked_up":
-        return [{ label: "En route vers le client", emoji: "🚀", status: "on_the_way", color: "bg-orange-600" }];
+        return [
+          { label: "Je suis en route", emoji: "🚀", status: "on_the_way", color: "bg-orange-600" },
+        ];
       case "on_the_way":
-        return [{ label: "Arrivé chez le client", emoji: "📍", status: "driver_arrived", color: "bg-teal-600" }];
+        return [
+          { label: "Je suis arrivé chez le client", emoji: "📍", status: "driver_arrived", color: "bg-teal-600" },
+        ];
       case "driver_arrived":
-        return [{ label: "Livraison effectuée", emoji: "🎉", status: "delivered", color: "bg-green-600" }];
+        // ✅ Pas de bouton — c'est le CLIENT qui confirme
+        return [];
       default:
         return [];
     }
@@ -431,10 +467,8 @@ export default function DriverDashboard() {
     <main className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-28">
       <div className="max-w-lg mx-auto px-4 pt-6">
 
-        {/* ✅ HEADER avec bouton Déconnexion bien visible */}
+        {/* HEADER */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm mb-5">
-
-          {/* Ligne 1 — nom + boutons */}
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <h1 className="text-base font-bold text-[#00572D] dark:text-green-400 truncate">
@@ -446,7 +480,6 @@ export default function DriverDashboard() {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              {/* Bouton disponibilité */}
               <button
                 onClick={toggleAvailability}
                 className={`px-3 py-2 rounded-xl font-bold text-xs transition whitespace-nowrap ${
@@ -458,7 +491,6 @@ export default function DriverDashboard() {
                 {driverProfile.is_available ? "🟢 En ligne" : "🔴 Hors ligne"}
               </button>
 
-              {/* ✅ Bouton Déconnexion bien visible */}
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl font-bold text-xs transition whitespace-nowrap shadow-sm"
@@ -469,7 +501,6 @@ export default function DriverDashboard() {
             </div>
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-3 gap-2 mt-4">
             <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-2 text-center">
               <p className="text-lg font-bold text-[#00572D] dark:text-green-400">
@@ -492,7 +523,7 @@ export default function DriverDashboard() {
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* TABS */}
         <div className="flex gap-2 mb-5">
           {[
             { key: "missions", label: "📋 Missions", count: availableMissions.length },
@@ -522,7 +553,6 @@ export default function DriverDashboard() {
         {/* ========== MISSIONS DISPONIBLES ========== */}
         {tab === "missions" && (
           <div className="space-y-3">
-
             {!driverProfile.is_available && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3">
                 <p className="text-xs text-yellow-700 dark:text-yellow-400 text-center font-semibold">
@@ -653,6 +683,7 @@ export default function DriverDashboard() {
 
             {activeMission && (
               <div className="space-y-4">
+                {/* Statut */}
                 {(() => {
                   const cfg = getStatusConfig(activeMission.status);
                   return (
@@ -664,6 +695,44 @@ export default function DriverDashboard() {
                   );
                 })()}
 
+                {/* ✅ CODE SÉCURISÉ À MONTRER À LA PHARMACIE */}
+                {activeMission.pickup_otp && (
+                  <div className={`rounded-xl p-4 text-center border-2 ${
+                    activeMission.pickup_otp_verified
+                      ? "bg-green-50 dark:bg-green-900/20 border-green-400 dark:border-green-600"
+                      : "bg-yellow-50 dark:bg-yellow-900/20 border-yellow-400 dark:border-yellow-600"
+                  }`}>
+                    {activeMission.pickup_otp_verified ? (
+                      <div>
+                        <p className="text-xs font-bold text-green-700 dark:text-green-400 mb-1">
+                          ✅ Code validé par la pharmacie
+                        </p>
+                        <p className="text-2xl font-black tracking-widest text-green-600 dark:text-green-400">
+                          {activeMission.pickup_otp}
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-xs font-bold text-yellow-700 dark:text-yellow-400 mb-2">
+                          🔐 Présentez ce code à la pharmacie
+                        </p>
+                        <p className="text-4xl font-black tracking-widest text-yellow-700 dark:text-yellow-400 mb-2">
+                          {activeMission.pickup_otp}
+                        </p>
+                        <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                          La pharmacie vérifiera ce code avant de vous remettre le colis.
+                        </p>
+                        {activeMission.status === "driver_arrived_at_pharmacy" && (
+                          <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1 font-semibold animate-pulse">
+                            ⏳ En attente de validation par la pharmacie...
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Pharmacie */}
                 <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
                   <p className="font-bold text-sm text-[#00572D] dark:text-green-400 mb-1">
                     🏥 {activeMission.pharmacies?.name}
@@ -672,28 +741,30 @@ export default function DriverDashboard() {
                   {activeMission.pharmacies?.phone && (
                     <a
                       href={`tel:${activeMission.pharmacies.phone}`}
-                      className="inline-block mt-2 text-xs text-[#00572D] dark:text-green-400 font-semibold"
+                      className="inline-flex items-center gap-1 mt-2 text-xs text-[#00572D] dark:text-green-400 font-semibold"
                     >
                       📞 {activeMission.pharmacies.phone}
                     </a>
                   )}
                 </div>
 
+                {/* Produits */}
                 <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                  <p className="font-bold text-sm mb-2 dark:text-white">💊 Produits</p>
+                  <p className="font-bold text-sm mb-2 dark:text-white">💊 Produits à livrer</p>
                   {activeMissionItems.length === 0 && (
-                    <p className="text-xs text-gray-400">Aucun produit trouvé</p>
+                    <p className="text-xs text-gray-400">Chargement...</p>
                   )}
                   {activeMissionItems.map((item) => (
                     <div key={item.id} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
                       <p className="text-xs dark:text-gray-300">{item.medicine_name} × {item.quantity}</p>
                       <p className="text-xs font-bold text-[#00572D] dark:text-green-400">
-                        {item.subtotal?.toLocaleString()} FCFA
+                        {(item.subtotal || 0).toLocaleString()} FCFA
                       </p>
                     </div>
                   ))}
                 </div>
 
+                {/* Adresse livraison */}
                 {activeMissionAddress && (
                   <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
                     <p className="font-bold text-sm mb-2 dark:text-white">🏠 Livrer à</p>
@@ -717,34 +788,41 @@ export default function DriverDashboard() {
                   </div>
                 )}
 
-                {activeMission.pickup_otp &&
-                  !activeMission.pickup_otp_verified &&
-                  ["driver_assigned", "driver_arrived_at_pharmacy"].includes(activeMission.status) && (
-                    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4 text-center">
-                      <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1">
-                        Montrez ce code à la pharmacie pour récupérer la commande
-                      </p>
-                      <p className="text-4xl font-black tracking-[0.5em] text-yellow-700 dark:text-yellow-400">
-                        {activeMission.pickup_otp}
-                      </p>
-                    </div>
-                  )}
-
+                {/* Gain */}
                 <div className="bg-[#00572D] rounded-xl p-4 text-white">
-                  <div className="flex justify-between">
-                    <span className="text-green-200 text-sm">Votre gain</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-green-200 text-sm">Votre gain estimé</span>
                     <span className="font-bold text-lg">
                       {(activeMission.driver_earning || 0).toLocaleString()} FCFA
                     </span>
                   </div>
+                  <p className="text-xs text-green-200 mt-1">
+                    Versé après confirmation du client
+                  </p>
                 </div>
 
+                {/* Message "En attente du client" si driver_arrived */}
+                {activeMission.status === "driver_arrived" && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-4 text-center">
+                    <p className="text-sm font-bold text-blue-700 dark:text-blue-400">
+                      📍 Vous êtes arrivé chez le client
+                    </p>
+                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                      En attente de la confirmation de réception par le client.
+                    </p>
+                    <p className="text-xs text-blue-500 dark:text-blue-400 mt-1 font-semibold animate-pulse">
+                      ⏳ Le client doit cliquer sur "Confirmer la livraison"
+                    </p>
+                  </div>
+                )}
+
+                {/* Boutons d'action */}
                 {getMissionActions().map((action) => (
                   <button
                     key={action.status}
                     onClick={() => updateMissionStatus(action.status)}
                     disabled={updating}
-                    className={`w-full ${action.color} text-white p-3.5 rounded-xl font-bold text-sm disabled:opacity-50 transition`}
+                    className={`w-full ${action.color} text-white p-3.5 rounded-xl font-bold text-sm disabled:opacity-50 transition hover:opacity-90`}
                   >
                     {updating ? "Mise à jour..." : `${action.emoji} ${action.label}`}
                   </button>
@@ -761,30 +839,37 @@ export default function DriverDashboard() {
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-10 text-center shadow-sm">
                 <div className="text-5xl mb-3">📊</div>
                 <p className="text-gray-500 dark:text-gray-400 font-medium">Aucune livraison effectuée</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Vos livraisons terminées apparaîtront ici automatiquement.
+                </p>
               </div>
             )}
 
             {history.map((order) => (
               <div key={order.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-start">
                   <div>
                     <p className="font-bold text-sm dark:text-white">🏥 {order.pharmacies?.name}</p>
-                    <p className="text-xs text-gray-400">
+                    <p className="text-xs text-gray-400 mt-0.5">
                       {order.delivered_at
                         ? new Date(order.delivered_at).toLocaleDateString("fr-FR", {
                             day: "numeric",
                             month: "short",
+                            year: "numeric",
                             hour: "2-digit",
                             minute: "2-digit",
                           })
                         : "—"}
                     </p>
+                    <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full font-bold mt-1 inline-block">
+                      🎉 Livrée
+                    </span>
                   </div>
                   <div className="text-right">
                     <p className="font-bold text-[#00572D] dark:text-green-400">
                       +{(order.driver_earning || 0).toLocaleString()} FCFA
                     </p>
-                    <p className="text-xs text-green-600 dark:text-green-400">🎉 Livrée</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Gain versé</p>
                   </div>
                 </div>
               </div>

@@ -18,15 +18,15 @@ const STATUS_CONFIG: Record<string, {
   pending: { label: "En attente", emoji: "⏳", color: "text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-50 dark:bg-yellow-900/20" },
   accepted: { label: "Acceptée", emoji: "✅", color: "text-green-600 dark:text-green-400", bg: "bg-green-50 dark:bg-green-900/20" },
   rejected: { label: "Refusée", emoji: "❌", color: "text-red-600 dark:text-red-400", bg: "bg-red-50 dark:bg-red-900/20" },
-  payment_confirmed: { label: "Paiement confirmé", emoji: "💳", color: "text-green-600 dark:text-green-400", bg: "bg-green-50 dark:bg-green-900/20" },
-  preparing: { label: "Préparation en cours", emoji: "📦", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-900/20" },
+  payment_confirmed: { label: "Commande reçue", emoji: "🆕", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-900/20" },
+  preparing: { label: "Préparation en cours", emoji: "📦", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-900/20" },
   ready: { label: "Prête", emoji: "🎁", color: "text-purple-600 dark:text-purple-400", bg: "bg-purple-50 dark:bg-purple-900/20" },
   driver_assigned: { label: "Livreur affecté", emoji: "🏍️", color: "text-indigo-600 dark:text-indigo-400", bg: "bg-indigo-50 dark:bg-indigo-900/20" },
   driver_arrived_at_pharmacy: { label: "Livreur à la pharmacie", emoji: "🏥", color: "text-indigo-600 dark:text-indigo-400", bg: "bg-indigo-50 dark:bg-indigo-900/20" },
-  picked_up: { label: "Commande récupérée", emoji: "📬", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-900/20" },
+  picked_up: { label: "Colis récupéré", emoji: "📬", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-900/20" },
   on_the_way: { label: "Livreur en route", emoji: "🚀", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-900/20" },
   driver_arrived: { label: "Livreur arrivé", emoji: "📍", color: "text-teal-600 dark:text-teal-400", bg: "bg-teal-50 dark:bg-teal-900/20" },
-  delivered: { label: "Livrée", emoji: "🎉", color: "text-green-700 dark:text-green-400", bg: "bg-green-100 dark:bg-green-900/30" },
+  delivered: { label: "Livrée ✅", emoji: "🎉", color: "text-green-700 dark:text-green-400", bg: "bg-green-100 dark:bg-green-900/30" },
   cancelled: { label: "Annulée", emoji: "❌", color: "text-red-600 dark:text-red-400", bg: "bg-red-50 dark:bg-red-900/20" },
 };
 
@@ -40,6 +40,9 @@ function getStatusConfig(status: string) {
 }
 
 const DELIVERY_STATUSES = ["picked_up", "on_the_way", "driver_arrived"];
+
+// ✅ Statuts où le client peut confirmer la livraison
+const CONFIRMABLE_STATUSES = ["driver_arrived", "on_the_way", "picked_up"];
 
 const ORDER_STEPS = [
   "payment_confirmed",
@@ -133,9 +136,6 @@ export default function ReservationsPage() {
       .channel("reservations-orders-realtime")
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, () => {
         loadAll();
-        if (selectedItem && selectedType === "order") {
-          openOrderDetail({ ...selectedItem });
-        }
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "reservations" }, () => {
         loadAll();
@@ -180,7 +180,6 @@ export default function ReservationsPage() {
   }
 
   async function openOrderDetail(order: any) {
-    // Recharger la commande fraîche depuis Supabase
     const { data: freshOrder } = await supabase
       .from("orders")
       .select(`
@@ -235,21 +234,21 @@ export default function ReservationsPage() {
   }
 
   // =====================================================
-  // CONFIRMER LA LIVRAISON — LIBÉRER L'ESCROW
+  // ✅ CONFIRMER LA LIVRAISON — LIBÉRER L'ESCROW
   // =====================================================
   async function confirmDelivery(orderId: string) {
     if (!currentUser) return;
     setConfirming(true);
 
     try {
-      // 1. Récupérer l'escrow
-      const { data: escrow, error: escrowError } = await supabase
+      // Récupérer l'escrow
+      const { data: escrow } = await supabase
         .from("escrow_accounts")
         .select("*")
         .eq("order_id", orderId)
         .maybeSingle();
 
-      // 2. Récupérer la commande avec le livreur
+      // Récupérer la commande
       const { data: order } = await supabase
         .from("orders")
         .select("*, driver_profiles(id, user_id, full_name, total_earnings, total_deliveries)")
@@ -258,18 +257,14 @@ export default function ReservationsPage() {
 
       if (!order) throw new Error("Commande introuvable");
 
-      // 3. Si escrow existe, libérer au livreur
+      // Libérer l'escrow si existant
       if (escrow && escrow.status === "held" && order.driver_id) {
         const driverProfileId = order.driver_id;
         const driverUserId = order.driver_profiles?.user_id;
 
-        // Créer/récupérer wallet livreur
         const driverWalletId = await getOrCreateWallet(driverProfileId, "driver");
-
-        // Créditer le livreur
         await creditWallet(driverWalletId, escrow.driver_amount);
 
-        // Créditer KISI (wallet global)
         const { data: kisiWallet } = await supabase
           .from("wallets")
           .select("id")
@@ -280,7 +275,6 @@ export default function ReservationsPage() {
           await creditWallet(kisiWallet.id, escrow.commission_amount);
         }
 
-        // Transactions financières
         await supabase.from("financial_transactions").insert([
           {
             order_id: orderId,
@@ -288,25 +282,22 @@ export default function ReservationsPage() {
             to_wallet_id: driverWalletId,
             amount: escrow.driver_amount,
             status: "completed",
-            description: `Gain livraison libéré au livreur`,
-            metadata: { commission_deducted: escrow.commission_amount },
+            description: "Gain livraison libéré au livreur",
           },
           {
             order_id: orderId,
             type: "kisi_commission",
             amount: escrow.commission_amount,
             status: "completed",
-            description: `Commission KISI sur livraison`,
+            description: "Commission KISI",
           },
         ]);
 
-        // Mettre à jour l'escrow
         await supabase.from("escrow_accounts").update({
           status: "released",
           released_at: new Date().toISOString(),
         }).eq("order_id", orderId);
 
-        // Mettre à jour les gains du livreur
         const currentEarnings = Number(order.driver_profiles?.total_earnings || 0);
         const currentDeliveries = Number(order.driver_profiles?.total_deliveries || 0);
 
@@ -315,19 +306,18 @@ export default function ReservationsPage() {
           total_deliveries: currentDeliveries + 1,
         }).eq("id", driverProfileId);
 
-        // Notification livreur
         if (driverUserId) {
           await supabase.from("notifications").insert({
             user_id: driverUserId,
             type: "payment",
             title: "Paiement reçu 💰",
-            body: `${escrow.driver_amount.toLocaleString()} FCFA ont été ajoutés à votre portefeuille.`,
+            body: `${escrow.driver_amount.toLocaleString()} FCFA ont été ajoutés à votre portefeuille. Merci pour votre livraison !`,
             order_id: orderId,
           });
         }
       }
 
-      // 4. Mettre à jour le stock
+      // Mettre à jour le stock
       const { data: orderItemsList } = await supabase
         .from("order_items")
         .select("*")
@@ -351,7 +341,7 @@ export default function ReservationsPage() {
         }
       }
 
-      // 5. Mettre à jour la commande
+      // ✅ Mettre à jour la commande → delivered
       await supabase.from("orders").update({
         status: "delivered",
         escrow_status: "released",
@@ -360,16 +350,16 @@ export default function ReservationsPage() {
         delivered_at: new Date().toISOString(),
       }).eq("id", orderId);
 
-      // 6. Événement
+      // Événement
       await supabase.from("delivery_events").insert({
         order_id: orderId,
         actor_type: "user",
         actor_id: currentUser.id,
         status: "delivered",
-        label: "Client a confirmé la réception",
+        label: "Client a confirmé la réception — paiements effectués",
       });
 
-      // 7. Notification client
+      // Notification client
       await supabase.from("notifications").insert({
         user_id: currentUser.id,
         type: "delivery",
@@ -378,7 +368,16 @@ export default function ReservationsPage() {
         order_id: orderId,
       });
 
-      showToast("Livraison confirmée ! Le livreur a été payé. ✅");
+      // Notification pharmacie
+      await supabase.from("notifications").insert({
+        user_id: order.user_id,
+        type: "order_update",
+        title: "Commande livrée 🎉",
+        body: "La commande a été livrée et confirmée par le client.",
+        order_id: orderId,
+      });
+
+      showToast("✅ Livraison confirmée ! Le livreur a été payé automatiquement.");
       closeDetail();
       await loadAll();
     } catch (err: any) {
@@ -400,13 +399,11 @@ export default function ReservationsPage() {
     setDisputeSubmitting(true);
 
     try {
-      // Bloquer l'escrow
       await supabase.from("escrow_accounts").update({
         status: "disputed",
         disputed_at: new Date().toISOString(),
       }).eq("order_id", orderId);
 
-      // Créer le litige
       await supabase.from("disputes").insert({
         order_id: orderId,
         user_id: currentUser.id,
@@ -414,12 +411,10 @@ export default function ReservationsPage() {
         status: "open",
       });
 
-      // Mettre à jour la commande
       await supabase.from("orders").update({
         escrow_status: "disputed",
       }).eq("id", orderId);
 
-      // Alerter les admins
       const { data: admins } = await supabase
         .from("users")
         .select("id")
@@ -545,6 +540,7 @@ export default function ReservationsPage() {
             const cfg = getStatusConfig(item.status);
             const isOrder = item._type === "order";
             const progressIdx = isOrder ? getProgressIndex(item.status) : -1;
+            const needsConfirmation = isOrder && CONFIRMABLE_STATUSES.includes(item.status) && !item.client_confirmed;
 
             return (
               <button
@@ -606,7 +602,7 @@ export default function ReservationsPage() {
 
                   {isOrder && (
                     <>
-                      <div className="flex justify-between items-center">
+                      <div className="flex justify-between items-center flex-wrap gap-1">
                         <p className="text-sm font-bold text-[#00572D] dark:text-green-400">
                           {(item.total || 0).toLocaleString()} FCFA
                         </p>
@@ -615,10 +611,10 @@ export default function ReservationsPage() {
                             🏍️ {item.driver_profiles.full_name}
                           </span>
                         )}
-                        {/* Indicateur confirmation requise */}
-                        {item.status === "driver_arrived" && !item.client_confirmed && (
+                        {/* ✅ Indicateur confirmation requise */}
+                        {needsConfirmation && (
                           <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full font-bold animate-pulse">
-                            ✅ Confirmation requise
+                            ✅ Confirmer la livraison
                           </span>
                         )}
                       </div>
@@ -705,7 +701,7 @@ export default function ReservationsPage() {
                     })}
                   </div>
                   <div className="flex justify-between text-[9px] text-gray-400">
-                    <span>Payé</span>
+                    <span>Reçue</span>
                     <span>Prépa</span>
                     <span>Prête</span>
                     <span>Livreur</span>
@@ -780,13 +776,15 @@ export default function ReservationsPage() {
               {selectedType === "order" && (
                 <div className="bg-[#00572D] rounded-xl p-4 text-white space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-green-200">Médicaments</span>
+                    <span className="text-green-200">Médicaments ✅</span>
                     <span className="font-bold">{(selectedItem.subtotal || 0).toLocaleString()} FCFA</span>
                   </div>
                   {selectedItem.delivery_fee > 0 && (
                     <div className="flex justify-between text-sm">
                       <span className="text-green-200">
-                        Livraison {selectedItem.escrow_status === "held" ? "🔒" : selectedItem.escrow_status === "released" ? "✅" : ""}
+                        Livraison{" "}
+                        {selectedItem.escrow_status === "held" ? "🔒" :
+                         selectedItem.escrow_status === "released" ? "✅" : ""}
                       </span>
                       <span className="font-bold">{(selectedItem.delivery_fee || 0).toLocaleString()} FCFA</span>
                     </div>
@@ -795,11 +793,9 @@ export default function ReservationsPage() {
                     <span>Total payé</span>
                     <span>{(selectedItem.total || 0).toLocaleString()} FCFA</span>
                   </div>
-
-                  {/* Statut escrow */}
                   {selectedItem.delivery_fee > 0 && (
-                    <div className="bg-white/10 rounded-xl p-2 text-xs text-center mt-1">
-                      {selectedItem.escrow_status === "held" && "🔒 Frais de livraison en attente de votre confirmation"}
+                    <div className="bg-white/10 rounded-xl p-2 text-xs text-center">
+                      {selectedItem.escrow_status === "held" && "🔒 Frais de livraison sécurisés — libérés à votre confirmation"}
                       {selectedItem.escrow_status === "released" && "✅ Frais de livraison versés au livreur"}
                       {selectedItem.escrow_status === "disputed" && "⚠️ Litige en cours — Fonds bloqués"}
                     </div>
@@ -867,17 +863,19 @@ export default function ReservationsPage() {
                 </div>
               )}
 
-              {/* OTP */}
+              {/* Code OTP visible pour le client */}
               {selectedType === "order" &&
                 selectedItem.pickup_otp &&
-                !selectedItem.pickup_otp_verified &&
                 ["ready", "driver_assigned", "driver_arrived_at_pharmacy"].includes(selectedItem.status) && (
                   <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3 text-center">
-                    <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1">
-                      Code de remise à la pharmacie
+                    <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1 font-semibold">
+                      🔐 Code de remise pharmacie → livreur
                     </p>
                     <p className="text-3xl font-black tracking-widest text-yellow-700 dark:text-yellow-400">
                       {selectedItem.pickup_otp}
+                    </p>
+                    <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                      Ce code sera présenté par le livreur à la pharmacie.
                     </p>
                   </div>
                 )}
@@ -907,15 +905,20 @@ export default function ReservationsPage() {
 
               {/* ✅ BOUTON CONFIRMATION LIVRAISON */}
               {selectedType === "order" &&
-                selectedItem.status === "driver_arrived" &&
+                CONFIRMABLE_STATUSES.includes(selectedItem.status) &&
                 !selectedItem.client_confirmed && (
-                  <div className="space-y-2 pt-2">
+                  <div className="space-y-2 pt-1">
                     <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-3 text-center">
-                      <p className="text-xs text-green-700 dark:text-green-400 font-semibold">
-                        🎁 Le livreur est arrivé. Vérifiez votre colis avant de confirmer.
+                      <p className="text-sm font-bold text-green-700 dark:text-green-400">
+                        {selectedItem.status === "driver_arrived"
+                          ? "🎁 Le livreur est arrivé !"
+                          : selectedItem.status === "on_the_way"
+                          ? "🚀 Le livreur est en route"
+                          : "📬 Le livreur a récupéré le colis"}
                       </p>
                       <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                        Votre confirmation déclenchera le paiement du livreur.
+                        Confirmez la réception dès que vous avez votre colis.
+                        Cela déclenchera automatiquement le paiement du livreur.
                       </p>
                     </div>
 
@@ -929,27 +932,29 @@ export default function ReservationsPage() {
 
                     <button
                       onClick={() => setShowDisputeModal(true)}
-                      className="w-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-3 rounded-xl font-bold text-sm"
+                      className="w-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-3 rounded-xl font-bold text-sm transition"
                     >
                       ⚠️ Signaler un problème
                     </button>
                   </div>
                 )}
 
-              {/* Commande déjà confirmée */}
+              {/* Commande confirmée */}
               {selectedType === "order" && selectedItem.client_confirmed && (
                 <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-center">
                   <p className="text-green-700 dark:text-green-400 font-bold text-sm">
-                    ✅ Livraison confirmée le{" "}
-                    {selectedItem.client_confirmed_at
-                      ? new Date(selectedItem.client_confirmed_at).toLocaleDateString("fr-FR", {
-                          day: "numeric",
-                          month: "long",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "—"}
+                    🎉 Livraison confirmée
                   </p>
+                  {selectedItem.client_confirmed_at && (
+                    <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                      Le {new Date(selectedItem.client_confirmed_at).toLocaleDateString("fr-FR", {
+                        day: "numeric",
+                        month: "long",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -960,7 +965,7 @@ export default function ReservationsPage() {
                     ⚠️ Litige en cours
                   </p>
                   <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
-                    L'équipe KISI examine votre dossier. Les fonds sont bloqués jusqu'à résolution.
+                    L'équipe KISI examine votre dossier. Les fonds sont bloqués.
                   </p>
                 </div>
               )}
@@ -987,7 +992,7 @@ export default function ReservationsPage() {
               ⚠️ Signaler un problème
             </h2>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              Sélectionnez le motif de votre problème. Les fonds seront bloqués jusqu'à résolution par KISI.
+              Sélectionnez le motif. Les fonds seront bloqués jusqu'à résolution par KISI.
             </p>
 
             <div className="space-y-2 mb-4">
