@@ -39,6 +39,7 @@ export default function DriverDashboard() {
 
   const channelRef = useRef<any>(null);
   const refreshIntervalRef = useRef<any>(null);
+  const driverProfileRef = useRef<any>(null);
 
   useEffect(() => {
     loadDriver();
@@ -82,14 +83,13 @@ export default function DriverDashboard() {
     }
 
     setDriverProfile(driver);
+    driverProfileRef.current = driver;
     setLoading(false);
 
-    // ✅ Charger les missions même si hors ligne
     await loadAvailableMissions();
     await loadActiveMission(driver.id);
     await loadHistory(driver.id);
 
-    // ✅ Canal Realtime
     if (channelRef.current) {
       await supabase.removeChannel(channelRef.current);
       channelRef.current = null;
@@ -103,19 +103,19 @@ export default function DriverDashboard() {
         table: "orders",
       }, () => {
         loadAvailableMissions();
-        loadActiveMission(driver.id);
+        if (driverProfileRef.current) {
+          loadActiveMission(driverProfileRef.current.id);
+        }
       })
       .subscribe();
 
     channelRef.current = channel;
 
-    // ✅ Rafraîchissement automatique toutes les 30 secondes
     refreshIntervalRef.current = setInterval(() => {
       loadAvailableMissions();
     }, 30000);
   }
 
-  // ✅ Charge TOUTES les missions prêtes — sans filtre is_available
   async function loadAvailableMissions() {
     setLoadingMissions(true);
 
@@ -189,6 +189,7 @@ export default function DriverDashboard() {
 
     const updated = { ...driverProfile, is_available: newStatus };
     setDriverProfile(updated);
+    driverProfileRef.current = updated;
 
     if (newStatus) {
       showToast("Vous êtes maintenant disponible 🟢");
@@ -204,9 +205,10 @@ export default function DriverDashboard() {
 
     const id = navigator.geolocation.watchPosition(
       async (pos) => {
-        if (!driverProfile) return;
+        const dp = driverProfileRef.current;
+        if (!dp) return;
         await supabase.from("driver_locations").upsert({
-          driver_id: driverProfile.id,
+          driver_id: dp.id,
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
           heading: pos.coords.heading || 0,
@@ -228,9 +230,10 @@ export default function DriverDashboard() {
       setWatchId(null);
     }
 
-    if (driverProfile) {
+    const dp = driverProfileRef.current;
+    if (dp) {
       supabase.from("driver_locations").upsert({
-        driver_id: driverProfile.id,
+        driver_id: dp.id,
         latitude: 0,
         longitude: 0,
         is_online: false,
@@ -240,9 +243,10 @@ export default function DriverDashboard() {
   }
 
   async function acceptMission(orderId: string) {
-    if (!driverProfile) return;
+    const dp = driverProfileRef.current;
+    if (!dp) return;
 
-    if (!driverProfile.is_available) {
+    if (!dp.is_available) {
       showToast("Activez votre disponibilité pour accepter une mission", "error");
       return;
     }
@@ -252,7 +256,7 @@ export default function DriverDashboard() {
     const { error } = await supabase
       .from("orders")
       .update({
-        driver_id: driverProfile.id,
+        driver_id: dp.id,
         status: "driver_assigned",
         driver_assigned_at: new Date().toISOString(),
       })
@@ -267,35 +271,43 @@ export default function DriverDashboard() {
       return;
     }
 
+    // Événement de livraison
     await supabase.from("delivery_events").insert({
       order_id: orderId,
       actor_type: "driver",
-      actor_id: driverProfile.id,
+      actor_id: dp.id,
       status: "driver_assigned",
-      label: `Livreur ${driverProfile.full_name} affecté`,
+      label: `Livreur ${dp.full_name} affecté`,
     });
 
+    // Notification client
     const order = availableMissions.find((o) => o.id === orderId);
-    if (order) {
+    if (order?.user_id) {
       await supabase.from("notifications").insert({
         user_id: order.user_id,
         type: "delivery",
         title: "Livreur affecté 🏍️",
-        body: `${driverProfile.full_name} va récupérer votre commande.`,
+        body: `${dp.full_name} va récupérer votre commande.`,
         order_id: orderId,
       });
     }
 
-    showToast("Mission acceptée ! 🏍️");
-    startGPS();
-    await loadActiveMission(driverProfile.id);
+    // ✅ Charger la mission active AVANT de changer d'onglet
+    await loadActiveMission(dp.id);
     await loadAvailableMissions();
+
     setUpdating(false);
+    startGPS();
+
+    showToast("Mission acceptée ! 🏍️");
+
+    // ✅ Basculer sur l'onglet En cours
     setTab("active");
   }
 
   async function updateMissionStatus(newStatus: string) {
-    if (!activeMission || !driverProfile) return;
+    const dp = driverProfileRef.current;
+    if (!activeMission || !dp) return;
     setUpdating(true);
 
     const updateData: any = { status: newStatus };
@@ -314,7 +326,7 @@ export default function DriverDashboard() {
     await supabase.from("delivery_events").insert({
       order_id: activeMission.id,
       actor_type: "driver",
-      actor_id: driverProfile.id,
+      actor_id: dp.id,
       status: newStatus,
       label: cfg.label,
     });
@@ -353,12 +365,12 @@ export default function DriverDashboard() {
 
     if (newStatus === "delivered") {
       showToast("Livraison terminée ! 🎉");
-      await loadHistory(driverProfile.id);
+      await loadHistory(dp.id);
       setActiveMission(null);
       setTab("missions");
     } else {
       showToast(`Statut mis à jour : ${cfg.label}`);
-      await loadActiveMission(driverProfile.id);
+      await loadActiveMission(dp.id);
     }
 
     setUpdating(false);
@@ -419,11 +431,13 @@ export default function DriverDashboard() {
     <main className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-28">
       <div className="max-w-lg mx-auto px-4 pt-6">
 
-        {/* Header */}
+        {/* ✅ HEADER avec bouton Déconnexion bien visible */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm mb-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-lg font-bold text-[#00572D] dark:text-green-400">
+
+          {/* Ligne 1 — nom + boutons */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <h1 className="text-base font-bold text-[#00572D] dark:text-green-400 truncate">
                 🏍️ {driverProfile.full_name}
               </h1>
               <p className="text-xs text-gray-400">
@@ -431,10 +445,11 @@ export default function DriverDashboard() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Bouton disponibilité */}
               <button
                 onClick={toggleAvailability}
-                className={`px-3 py-2 rounded-xl font-bold text-xs transition ${
+                className={`px-3 py-2 rounded-xl font-bold text-xs transition whitespace-nowrap ${
                   driverProfile.is_available
                     ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
                     : "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
@@ -443,11 +458,13 @@ export default function DriverDashboard() {
                 {driverProfile.is_available ? "🟢 En ligne" : "🔴 Hors ligne"}
               </button>
 
+              {/* ✅ Bouton Déconnexion bien visible */}
               <button
                 onClick={handleLogout}
-                className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl font-bold text-xs transition"
+                className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl font-bold text-xs transition whitespace-nowrap shadow-sm"
               >
-                🚪
+                <span>🚪</span>
+                <span>Déconnexion</span>
               </button>
             </div>
           </div>
@@ -506,7 +523,6 @@ export default function DriverDashboard() {
         {tab === "missions" && (
           <div className="space-y-3">
 
-            {/* Info hors ligne */}
             {!driverProfile.is_available && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3">
                 <p className="text-xs text-yellow-700 dark:text-yellow-400 text-center font-semibold">
@@ -514,12 +530,10 @@ export default function DriverDashboard() {
                 </p>
                 <p className="text-xs text-yellow-600 dark:text-yellow-400 text-center mt-1">
                   Activez votre disponibilité pour accepter des missions.
-                  Vous pouvez voir les missions disponibles ci-dessous.
                 </p>
               </div>
             )}
 
-            {/* Bouton rafraîchir */}
             <div className="flex items-center justify-between">
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 {availableMissions.length} mission{availableMissions.length !== 1 ? "s" : ""} disponible{availableMissions.length !== 1 ? "s" : ""}
@@ -531,14 +545,11 @@ export default function DriverDashboard() {
               >
                 {loadingMissions ? (
                   <span className="w-3 h-3 border border-[#00572D] border-t-transparent rounded-full animate-spin inline-block" />
-                ) : (
-                  "🔄"
-                )}
+                ) : "🔄"}
                 Actualiser
               </button>
             </div>
 
-            {/* Chargement */}
             {loadingMissions && (
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 text-center shadow-sm">
                 <div className="w-6 h-6 border-2 border-[#00572D] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
@@ -546,42 +557,24 @@ export default function DriverDashboard() {
               </div>
             )}
 
-            {/* Aucune mission */}
             {!loadingMissions && availableMissions.length === 0 && (
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-10 text-center shadow-sm">
                 <div className="text-5xl mb-3">🔍</div>
-                <p className="text-gray-500 dark:text-gray-400 font-medium">
-                  Aucune mission disponible
-                </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Les nouvelles missions apparaîtront ici automatiquement.
-                </p>
+                <p className="text-gray-500 dark:text-gray-400 font-medium">Aucune mission disponible</p>
+                <p className="text-xs text-gray-400 mt-1">Les nouvelles missions apparaîtront ici automatiquement.</p>
               </div>
             )}
 
-            {/* Liste missions */}
             {!loadingMissions && availableMissions.map((mission) => (
-              <div
-                key={mission.id}
-                className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
-              >
-                {/* Pharmacie */}
+              <div key={mission.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
                 <div className="flex items-center gap-3 mb-3">
                   {mission.pharmacies?.logo_url ? (
-                    <img
-                      src={mission.pharmacies.logo_url}
-                      alt=""
-                      className="w-10 h-10 rounded-full object-cover border-2 border-gray-100 dark:border-gray-700"
-                    />
+                    <img src={mission.pharmacies.logo_url} alt="" className="w-10 h-10 rounded-full object-cover border-2 border-gray-100 dark:border-gray-700" />
                   ) : (
-                    <div className="w-10 h-10 rounded-full bg-[#00572D]/10 flex items-center justify-center text-lg">
-                      🏥
-                    </div>
+                    <div className="w-10 h-10 rounded-full bg-[#00572D]/10 flex items-center justify-center text-lg">🏥</div>
                   )}
                   <div>
-                    <p className="font-bold text-sm dark:text-white">
-                      🏥 {mission.pharmacies?.name || "Pharmacie"}
-                    </p>
+                    <p className="font-bold text-sm dark:text-white">🏥 {mission.pharmacies?.name || "Pharmacie"}</p>
                     <p className="text-xs text-gray-400">📍 {mission.pharmacies?.city || "—"}</p>
                   </div>
                   <div className="ml-auto">
@@ -591,7 +584,6 @@ export default function DriverDashboard() {
                   </div>
                 </div>
 
-                {/* Adresse livraison */}
                 {mission.addresses && (
                   <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-2.5 mb-3">
                     <p className="text-xs text-gray-500 dark:text-gray-400">
@@ -602,7 +594,6 @@ export default function DriverDashboard() {
                   </div>
                 )}
 
-                {/* Montants */}
                 <div className="flex justify-between items-center mb-3 bg-green-50 dark:bg-green-900/10 rounded-xl p-2.5">
                   <div>
                     <p className="text-[10px] text-gray-400">Frais de livraison</p>
@@ -619,14 +610,12 @@ export default function DriverDashboard() {
                   </div>
                 </div>
 
-                {/* Date */}
                 {mission.ready_at && (
                   <p className="text-[10px] text-gray-400 mb-3 text-center">
                     🕒 Prête depuis {new Date(mission.ready_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
                   </p>
                 )}
 
-                {/* Bouton accepter */}
                 <button
                   onClick={() => acceptMission(mission.id)}
                   disabled={updating || !driverProfile.is_available}
@@ -637,7 +626,7 @@ export default function DriverDashboard() {
                   }`}
                 >
                   {updating
-                    ? "Acceptation..."
+                    ? "Acceptation en cours..."
                     : !driverProfile.is_available
                     ? "🔴 Passez en ligne pour accepter"
                     : "✅ Accepter cette mission"}
@@ -655,6 +644,9 @@ export default function DriverDashboard() {
                 <div className="text-5xl mb-3">🏍️</div>
                 <p className="text-gray-500 dark:text-gray-400 font-medium">
                   Aucune mission en cours
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Acceptez une mission pour qu'elle apparaisse ici.
                 </p>
               </div>
             )}
@@ -689,6 +681,9 @@ export default function DriverDashboard() {
 
                 <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
                   <p className="font-bold text-sm mb-2 dark:text-white">💊 Produits</p>
+                  {activeMissionItems.length === 0 && (
+                    <p className="text-xs text-gray-400">Aucun produit trouvé</p>
+                  )}
                   {activeMissionItems.map((item) => (
                     <div key={item.id} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
                       <p className="text-xs dark:text-gray-300">{item.medicine_name} × {item.quantity}</p>
@@ -765,9 +760,7 @@ export default function DriverDashboard() {
             {history.length === 0 && (
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-10 text-center shadow-sm">
                 <div className="text-5xl mb-3">📊</div>
-                <p className="text-gray-500 dark:text-gray-400 font-medium">
-                  Aucune livraison effectuée
-                </p>
+                <p className="text-gray-500 dark:text-gray-400 font-medium">Aucune livraison effectuée</p>
               </div>
             )}
 
