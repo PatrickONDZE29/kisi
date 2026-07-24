@@ -28,15 +28,21 @@ export default function DriverDashboard() {
   const [loading, setLoading] = useState(true);
   const [driverProfile, setDriverProfile] = useState<any>(null);
   const [availableMissions, setAvailableMissions] = useState<any[]>([]);
-  const [activeMission, setActiveMission] = useState<any | null>(null);
-  const [activeMissionItems, setActiveMissionItems] = useState<any[]>([]);
-  const [activeMissionAddress, setActiveMissionAddress] = useState<any | null>(null);
-  const [tab, setTab] = useState<"missions" | "active" | "history" | "profile">("missions");
+  const [activeMissions, setActiveMissions] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
-  const [updating, setUpdating] = useState(false);
-  const [watchId, setWatchId] = useState<number | null>(null);
+  const [tab, setTab] = useState<"missions" | "active" | "history" | "profile">("missions");
   const [loadingMissions, setLoadingMissions] = useState(false);
 
+  // ✅ Chargement INDÉPENDANT par mission
+  const [acceptingMissionId, setAcceptingMissionId] = useState<string | null>(null);
+  const [updatingMissionId, setUpdatingMissionId] = useState<string | null>(null);
+
+  // Mission sélectionnée pour voir les détails
+  const [selectedMission, setSelectedMission] = useState<any | null>(null);
+  const [selectedMissionItems, setSelectedMissionItems] = useState<any[]>([]);
+  const [selectedMissionAddress, setSelectedMissionAddress] = useState<any | null>(null);
+
+  const [watchId, setWatchId] = useState<number | null>(null);
   const channelRef = useRef<any>(null);
   const refreshIntervalRef = useRef<any>(null);
   const driverProfileRef = useRef<any>(null);
@@ -50,9 +56,7 @@ export default function DriverDashboard() {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
+      if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
     };
   }, []);
 
@@ -87,7 +91,7 @@ export default function DriverDashboard() {
     setLoading(false);
 
     await loadAvailableMissions();
-    await loadActiveMission(driver.id);
+    await loadActiveMissions(driver.id);
     await loadHistory(driver.id);
 
     if (channelRef.current) {
@@ -97,14 +101,11 @@ export default function DriverDashboard() {
 
     const channel = supabase
       .channel(`driver-missions-${driver.id}`)
-      .on("postgres_changes", {
-        event: "*",
-        schema: "public",
-        table: "orders",
-      }, () => {
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
         loadAvailableMissions();
         if (driverProfileRef.current) {
-          loadActiveMission(driverProfileRef.current.id);
+          loadActiveMissions(driverProfileRef.current.id);
+          loadHistory(driverProfileRef.current.id);
         }
       })
       .subscribe();
@@ -114,7 +115,7 @@ export default function DriverDashboard() {
     refreshIntervalRef.current = setInterval(() => {
       loadAvailableMissions();
       if (driverProfileRef.current) {
-        loadActiveMission(driverProfileRef.current.id);
+        loadActiveMissions(driverProfileRef.current.id);
       }
     }, 30000);
   }
@@ -126,50 +127,32 @@ export default function DriverDashboard() {
       .from("orders")
       .select(`
         *,
-        pharmacies(name, city, logo_url, latitude, longitude),
+        pharmacies(name, city, address, phone, logo_url, latitude, longitude),
         addresses(*)
       `)
       .eq("status", "ready")
       .is("driver_id", null)
       .order("ready_at", { ascending: true });
 
-    if (error) {
-      console.error("loadAvailableMissions error:", error.message);
-    }
+    if (error) console.error("loadAvailableMissions:", error.message);
 
     setAvailableMissions(data || []);
     setLoadingMissions(false);
   }
 
-  async function loadActiveMission(driverId: string) {
+  async function loadActiveMissions(driverId: string) {
     const { data } = await supabase
       .from("orders")
-      .select("*, pharmacies(name, city, logo_url, phone), addresses(*)")
+      .select(`
+        *,
+        pharmacies(name, city, address, phone, logo_url, latitude, longitude),
+        addresses(*)
+      `)
       .eq("driver_id", driverId)
-      .in("status", [
-        "driver_assigned",
-        "driver_arrived_at_pharmacy",
-        "picked_up",
-        "on_the_way",
-        "driver_arrived",
-      ])
-      .maybeSingle();
+      .in("status", ["driver_assigned", "driver_arrived_at_pharmacy", "picked_up", "on_the_way", "driver_arrived"])
+      .order("driver_assigned_at", { ascending: false });
 
-    if (data) {
-      setActiveMission(data);
-      setActiveMissionAddress(data.addresses);
-
-      const { data: items } = await supabase
-        .from("order_items")
-        .select("*")
-        .eq("order_id", data.id);
-
-      setActiveMissionItems(items || []);
-    } else {
-      setActiveMission(null);
-      setActiveMissionItems([]);
-      setActiveMissionAddress(null);
-    }
+    setActiveMissions(data || []);
   }
 
   async function loadHistory(driverId: string) {
@@ -182,6 +165,24 @@ export default function DriverDashboard() {
       .limit(20);
 
     setHistory(data || []);
+  }
+
+  async function openMissionDetail(mission: any) {
+    setSelectedMission(mission);
+
+    const { data: items } = await supabase
+      .from("order_items")
+      .select("*")
+      .eq("order_id", mission.id);
+
+    setSelectedMissionItems(items || []);
+    setSelectedMissionAddress(mission.addresses || null);
+  }
+
+  function closeMissionDetail() {
+    setSelectedMission(null);
+    setSelectedMissionItems([]);
+    setSelectedMissionAddress(null);
   }
 
   async function toggleAvailability() {
@@ -251,6 +252,7 @@ export default function DriverDashboard() {
     }
   }
 
+  // ✅ ACCEPTER UNE MISSION — chargement local à cette mission uniquement
   async function acceptMission(orderId: string) {
     const dp = driverProfileRef.current;
     if (!dp) return;
@@ -260,7 +262,8 @@ export default function DriverDashboard() {
       return;
     }
 
-    setUpdating(true);
+    // ✅ Seule cette mission passe en loading
+    setAcceptingMissionId(orderId);
 
     const { data: updatedOrder, error } = await supabase
       .from("orders")
@@ -272,12 +275,16 @@ export default function DriverDashboard() {
       .eq("id", orderId)
       .eq("status", "ready")
       .is("driver_id", null)
-      .select("*, pharmacies(name, city, logo_url, phone), addresses(*)")
+      .select(`
+        *,
+        pharmacies(name, city, address, phone, logo_url, latitude, longitude),
+        addresses(*)
+      `)
       .single();
 
     if (error || !updatedOrder) {
       showToast("Cette mission n'est plus disponible", "error");
-      setUpdating(false);
+      setAcceptingMissionId(null);
       await loadAvailableMissions();
       return;
     }
@@ -288,7 +295,7 @@ export default function DriverDashboard() {
       actor_type: "driver",
       actor_id: dp.id,
       status: "driver_assigned",
-      label: `Livreur ${dp.full_name} affecté`,
+      label: `Livreur ${dp.full_name} a accepté la mission`,
     });
 
     // Notification client
@@ -297,60 +304,56 @@ export default function DriverDashboard() {
         user_id: updatedOrder.user_id,
         type: "delivery",
         title: "Livreur affecté 🏍️",
-        body: `${dp.full_name} va récupérer votre commande. Code de remise : ${updatedOrder.pickup_otp}`,
+        body: `${dp.full_name} va récupérer votre commande (code : ${updatedOrder.pickup_otp}).`,
         order_id: orderId,
       });
     }
 
-    // ✅ Mettre directement la mission active sans recharger
-    setActiveMission(updatedOrder);
-    setActiveMissionAddress(updatedOrder.addresses);
-
-    // Charger les items
-    const { data: items } = await supabase
-      .from("order_items")
-      .select("*")
-      .eq("order_id", orderId);
-
-    setActiveMissionItems(items || []);
-
-    // Retirer de la liste des missions disponibles
+    // ✅ Retirer immédiatement de la liste disponible
     setAvailableMissions(prev => prev.filter(m => m.id !== orderId));
 
-    setUpdating(false);
+    // ✅ Ajouter immédiatement dans les missions actives
+    setActiveMissions(prev => [updatedOrder, ...prev]);
+
+    setAcceptingMissionId(null);
     startGPS();
     showToast("Mission acceptée ! 🏍️");
 
-    // ✅ Basculer immédiatement sur l'onglet En cours
+    // ✅ Basculer sur l'onglet En cours
     setTab("active");
   }
 
-  async function updateMissionStatus(newStatus: string) {
+  // Mettre à jour le statut d'une mission active
+  async function updateMissionStatus(orderId: string, newStatus: string) {
     const dp = driverProfileRef.current;
-    if (!activeMission || !dp) return;
-    setUpdating(true);
+    if (!dp) return;
+
+    setUpdatingMissionId(orderId);
 
     const updateData: any = { status: newStatus };
     if (newStatus === "picked_up") updateData.picked_up_at = new Date().toISOString();
-    if (newStatus === "on_the_way") updateData.picked_up_at = activeMission.picked_up_at || new Date().toISOString();
 
     const { data: updatedOrder, error } = await supabase
       .from("orders")
       .update(updateData)
-      .eq("id", activeMission.id)
-      .select("*, pharmacies(name, city, logo_url, phone), addresses(*)")
+      .eq("id", orderId)
+      .select(`
+        *,
+        pharmacies(name, city, address, phone, logo_url, latitude, longitude),
+        addresses(*)
+      `)
       .single();
 
     if (error) {
       showToast(error.message, "error");
-      setUpdating(false);
+      setUpdatingMissionId(null);
       return;
     }
 
     const cfg = getStatusConfig(newStatus);
 
     await supabase.from("delivery_events").insert({
-      order_id: activeMission.id,
+      order_id: orderId,
       actor_type: "driver",
       actor_id: dp.id,
       status: newStatus,
@@ -364,70 +367,69 @@ export default function DriverDashboard() {
         body: "Le livreur est arrivé à la pharmacie pour récupérer votre commande.",
       },
       picked_up: {
-        title: "Commande récupérée 📬",
-        body: "Le livreur a récupéré votre commande. La livraison va commencer.",
+        title: "Colis récupéré 📬",
+        body: "Le livreur a récupéré votre commande. La livraison commence !",
       },
       on_the_way: {
-        title: "En route 🚀",
-        body: "Le livreur est en route vers vous !",
+        title: "En route ! 🚀",
+        body: "Le livreur est en route vers vous.",
       },
       driver_arrived: {
         title: "Livreur arrivé 📍",
-        body: "Le livreur est arrivé à votre adresse. Préparez-vous à recevoir votre commande.",
+        body: "Le livreur est à votre porte. Préparez-vous à recevoir votre commande.",
       },
     };
 
-    if (notifs[newStatus]) {
+    const mission = activeMissions.find(m => m.id === orderId);
+    if (mission?.user_id && notifs[newStatus]) {
       await supabase.from("notifications").insert({
-        user_id: activeMission.user_id,
+        user_id: mission.user_id,
         type: "delivery",
         title: notifs[newStatus].title,
         body: notifs[newStatus].body,
-        order_id: activeMission.id,
+        order_id: orderId,
       });
     }
 
-    // ✅ Mettre à jour directement sans recharger
+    // ✅ Mettre à jour localement la mission active
     if (updatedOrder) {
-      setActiveMission(updatedOrder);
-      setActiveMissionAddress(updatedOrder.addresses);
+      setActiveMissions(prev =>
+        prev.map(m => m.id === orderId ? updatedOrder : m)
+      );
+
+      // Si la mission sélectionnée est celle-ci, mettre à jour
+      if (selectedMission?.id === orderId) {
+        setSelectedMission(updatedOrder);
+      }
     }
 
     showToast(`${cfg.emoji} ${cfg.label}`);
-    setUpdating(false);
+    setUpdatingMissionId(null);
   }
 
-  // ✅ Nouvelle logique des actions selon le flux
-  function getMissionActions(): { label: string; emoji: string; status: string; color: string }[] {
-    if (!activeMission) return [];
-
-    switch (activeMission.status) {
+  function getMissionActions(mission: any): { label: string; emoji: string; status: string; color: string }[] {
+    switch (mission.status) {
       case "driver_assigned":
-        return [
-          { label: "Je suis arrivé à la pharmacie", emoji: "🏥", status: "driver_arrived_at_pharmacy", color: "bg-indigo-600" },
-        ];
+        return [{ label: "Je suis arrivé à la pharmacie", emoji: "🏥", status: "driver_arrived_at_pharmacy", color: "bg-indigo-600" }];
       case "driver_arrived_at_pharmacy":
-        // ✅ Si OTP vérifié → peut continuer. Sinon → afficher le code, attendre la pharmacie
-        if (activeMission.pickup_otp_verified) {
-          return [
-            { label: "J'ai récupéré le colis", emoji: "📬", status: "picked_up", color: "bg-orange-600" },
-          ];
+        if (mission.pickup_otp_verified) {
+          return [{ label: "J'ai récupéré le colis", emoji: "📬", status: "picked_up", color: "bg-orange-600" }];
         }
-        return []; // Attendre que la pharmacie valide
+        return [];
       case "picked_up":
-        return [
-          { label: "Je suis en route", emoji: "🚀", status: "on_the_way", color: "bg-orange-600" },
-        ];
+        return [{ label: "Je suis en route", emoji: "🚀", status: "on_the_way", color: "bg-orange-500" }];
       case "on_the_way":
-        return [
-          { label: "Je suis arrivé chez le client", emoji: "📍", status: "driver_arrived", color: "bg-teal-600" },
-        ];
+        return [{ label: "Je suis arrivé chez le client", emoji: "📍", status: "driver_arrived", color: "bg-teal-600" }];
       case "driver_arrived":
-        // ✅ Pas de bouton — c'est le CLIENT qui confirme
         return [];
       default:
         return [];
     }
+  }
+
+  function openGoogleMaps(lat: any, lng: any, label?: string) {
+    const query = label || `${lat},${lng}`;
+    window.open(`https://maps.google.com/?q=${lat},${lng}&label=${encodeURIComponent(query || "")}`, "_blank");
   }
 
   if (loading) {
@@ -445,9 +447,7 @@ export default function DriverDashboard() {
       <main className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
         <div className="bg-white dark:bg-gray-900 rounded-3xl p-8 text-center max-w-sm shadow-xl">
           <div className="text-5xl mb-4">⏳</div>
-          <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">
-            Compte en vérification
-          </h2>
+          <h2 className="text-xl font-bold text-[#00572D] dark:text-green-400">Compte en vérification</h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">
             Votre compte livreur est en cours de vérification par l'équipe KISI.
             Vous serez notifié une fois activé.
@@ -527,7 +527,7 @@ export default function DriverDashboard() {
         <div className="flex gap-2 mb-5">
           {[
             { key: "missions", label: "📋 Missions", count: availableMissions.length },
-            { key: "active", label: "🚀 En cours", count: activeMission ? 1 : 0 },
+            { key: "active", label: "🚀 En cours", count: activeMissions.length },
             { key: "history", label: "📊 Historique", count: history.length },
             { key: "profile", label: "👤 Profil", count: 0 },
           ].map((t) => (
@@ -573,9 +573,9 @@ export default function DriverDashboard() {
                 disabled={loadingMissions}
                 className="text-xs text-[#00572D] dark:text-green-400 font-semibold flex items-center gap-1 disabled:opacity-50"
               >
-                {loadingMissions ? (
-                  <span className="w-3 h-3 border border-[#00572D] border-t-transparent rounded-full animate-spin inline-block" />
-                ) : "🔄"}
+                {loadingMissions
+                  ? <span className="w-3 h-3 border border-[#00572D] border-t-transparent rounded-full animate-spin inline-block" />
+                  : "🔄"}
                 Actualiser
               </button>
             </div>
@@ -595,240 +595,259 @@ export default function DriverDashboard() {
               </div>
             )}
 
-            {!loadingMissions && availableMissions.map((mission) => (
-              <div key={mission.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                <div className="flex items-center gap-3 mb-3">
-                  {mission.pharmacies?.logo_url ? (
-                    <img src={mission.pharmacies.logo_url} alt="" className="w-10 h-10 rounded-full object-cover border-2 border-gray-100 dark:border-gray-700" />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-[#00572D]/10 flex items-center justify-center text-lg">🏥</div>
-                  )}
-                  <div>
-                    <p className="font-bold text-sm dark:text-white">🏥 {mission.pharmacies?.name || "Pharmacie"}</p>
-                    <p className="text-xs text-gray-400">📍 {mission.pharmacies?.city || "—"}</p>
-                  </div>
-                  <div className="ml-auto">
-                    <span className="text-[10px] bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 px-2 py-1 rounded-full font-bold">
+            {!loadingMissions && availableMissions.map((mission) => {
+              // ✅ Chaque mission a son propre état de chargement
+              const isThisMissionAccepting = acceptingMissionId === mission.id;
+
+              return (
+                <div key={mission.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                  {/* Pharmacie */}
+                  <div className="flex items-center gap-3 mb-3">
+                    {mission.pharmacies?.logo_url ? (
+                      <img src={mission.pharmacies.logo_url} alt="" className="w-10 h-10 rounded-full object-cover border-2 border-gray-100 dark:border-gray-700" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-[#00572D]/10 flex items-center justify-center text-lg">🏥</div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm dark:text-white">🏥 {mission.pharmacies?.name || "Pharmacie"}</p>
+                      <p className="text-xs text-gray-400">📍 {mission.pharmacies?.city || "—"}</p>
+                    </div>
+                    <span className="text-[10px] bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 px-2 py-1 rounded-full font-bold shrink-0">
                       🎁 Prête
                     </span>
                   </div>
+
+                  {/* Adresse livraison */}
+                  {mission.addresses && (
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-2.5 mb-3">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        🏠 <span className="font-medium">{mission.addresses.address_line}</span>
+                        {mission.addresses.district && `, ${mission.addresses.district}`}
+                      </p>
+                      <p className="text-xs text-gray-400">📍 {mission.addresses.city}</p>
+                    </div>
+                  )}
+
+                  {/* Montants */}
+                  <div className="flex justify-between items-center mb-3 bg-green-50 dark:bg-green-900/10 rounded-xl p-2.5">
+                    <div>
+                      <p className="text-[10px] text-gray-400">Frais de livraison</p>
+                      <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
+                        {(mission.delivery_fee || 0).toLocaleString()} FCFA
+                      </p>
+                    </div>
+                    <div className="w-px h-8 bg-gray-200 dark:bg-gray-700" />
+                    <div className="text-right">
+                      <p className="text-[10px] text-gray-400">Votre gain estimé</p>
+                      <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
+                        {(mission.driver_earning || 0).toLocaleString()} FCFA
+                      </p>
+                    </div>
+                  </div>
+
+                  {mission.ready_at && (
+                    <p className="text-[10px] text-gray-400 mb-3 text-center">
+                      🕒 Prête depuis {new Date(mission.ready_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  )}
+
+                  {/* Boutons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openMissionDetail(mission)}
+                      className="flex-1 border-2 border-[#00572D] text-[#00572D] dark:text-green-400 dark:border-green-500 py-2.5 rounded-xl font-bold text-xs transition hover:bg-[#00572D]/5"
+                    >
+                      📋 Détails
+                    </button>
+
+                    {/* ✅ Seul ce bouton est en loading — pas les autres */}
+                    <button
+                      onClick={() => acceptMission(mission.id)}
+                      disabled={isThisMissionAccepting || !driverProfile.is_available}
+                      className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition ${
+                        !driverProfile.is_available
+                          ? "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
+                          : "bg-[#00572D] text-white hover:bg-green-800 disabled:opacity-70"
+                      }`}
+                    >
+                      {isThisMissionAccepting ? (
+                        <span className="flex items-center justify-center gap-1">
+                          <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Acceptation...
+                        </span>
+                      ) : !driverProfile.is_available ? (
+                        "🔴 Hors ligne"
+                      ) : (
+                        "✅ Accepter"
+                      )}
+                    </button>
+                  </div>
                 </div>
-
-                {mission.addresses && (
-                  <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-2.5 mb-3">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      🏠 <span className="font-medium">{mission.addresses.address_line}</span>
-                      {mission.addresses.district && `, ${mission.addresses.district}`}
-                    </p>
-                    <p className="text-xs text-gray-400">📍 {mission.addresses.city}</p>
-                  </div>
-                )}
-
-                <div className="flex justify-between items-center mb-3 bg-green-50 dark:bg-green-900/10 rounded-xl p-2.5">
-                  <div>
-                    <p className="text-[10px] text-gray-400">Frais de livraison</p>
-                    <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
-                      {(mission.delivery_fee || 0).toLocaleString()} FCFA
-                    </p>
-                  </div>
-                  <div className="w-px h-8 bg-gray-200 dark:bg-gray-700" />
-                  <div className="text-right">
-                    <p className="text-[10px] text-gray-400">Votre gain estimé</p>
-                    <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
-                      {(mission.driver_earning || 0).toLocaleString()} FCFA
-                    </p>
-                  </div>
-                </div>
-
-                {mission.ready_at && (
-                  <p className="text-[10px] text-gray-400 mb-3 text-center">
-                    🕒 Prête depuis {new Date(mission.ready_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-                  </p>
-                )}
-
-                <button
-                  onClick={() => acceptMission(mission.id)}
-                  disabled={updating || !driverProfile.is_available}
-                  className={`w-full p-3 rounded-xl font-bold text-sm transition ${
-                    !driverProfile.is_available
-                      ? "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
-                      : "bg-[#00572D] text-white hover:bg-green-800 disabled:opacity-50"
-                  }`}
-                >
-                  {updating
-                    ? "Acceptation en cours..."
-                    : !driverProfile.is_available
-                    ? "🔴 Passez en ligne pour accepter"
-                    : "✅ Accepter cette mission"}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
-        {/* ========== MISSION ACTIVE ========== */}
+        {/* ========== MISSIONS EN COURS ========== */}
         {tab === "active" && (
-          <div>
-            {!activeMission && (
+          <div className="space-y-4">
+            {activeMissions.length === 0 && (
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-10 text-center shadow-sm">
                 <div className="text-5xl mb-3">🏍️</div>
-                <p className="text-gray-500 dark:text-gray-400 font-medium">
-                  Aucune mission en cours
-                </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Acceptez une mission pour qu'elle apparaisse ici.
-                </p>
+                <p className="text-gray-500 dark:text-gray-400 font-medium">Aucune mission en cours</p>
+                <p className="text-xs text-gray-400 mt-1">Acceptez une mission pour qu'elle apparaisse ici.</p>
               </div>
             )}
 
-            {activeMission && (
-              <div className="space-y-4">
-                {/* Statut */}
-                {(() => {
-                  const cfg = getStatusConfig(activeMission.status);
-                  return (
-                    <div className={`${cfg.bg} rounded-xl p-3 text-center`}>
-                      <p className={`text-lg font-bold ${cfg.color}`}>
-                        {cfg.emoji} {cfg.label}
-                      </p>
-                    </div>
-                  );
-                })()}
+            {activeMissions.map((mission) => {
+              const cfg = getStatusConfig(mission.status);
+              const actions = getMissionActions(mission);
+              const isThisUpdating = updatingMissionId === mission.id;
 
-                {/* ✅ CODE SÉCURISÉ À MONTRER À LA PHARMACIE */}
-                {activeMission.pickup_otp && (
-                  <div className={`rounded-xl p-4 text-center border-2 ${
-                    activeMission.pickup_otp_verified
-                      ? "bg-green-50 dark:bg-green-900/20 border-green-400 dark:border-green-600"
-                      : "bg-yellow-50 dark:bg-yellow-900/20 border-yellow-400 dark:border-yellow-600"
-                  }`}>
-                    {activeMission.pickup_otp_verified ? (
-                      <div>
-                        <p className="text-xs font-bold text-green-700 dark:text-green-400 mb-1">
-                          ✅ Code validé par la pharmacie
+              return (
+                <div key={mission.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+                  {/* Statut */}
+                  <div className={`${cfg.bg} px-4 py-2 flex items-center justify-between`}>
+                    <span className={`text-xs font-bold ${cfg.color}`}>{cfg.emoji} {cfg.label}</span>
+                    <span className="text-[10px] text-gray-400">
+                      {new Date(mission.created_at).toLocaleDateString("fr-FR", {
+                        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+
+                  <div className="p-4 space-y-3">
+                    {/* Code sécurisé */}
+                    {mission.pickup_otp && (
+                      <div className={`rounded-xl p-3 text-center border-2 ${
+                        mission.pickup_otp_verified
+                          ? "bg-green-50 dark:bg-green-900/20 border-green-400"
+                          : "bg-yellow-50 dark:bg-yellow-900/20 border-yellow-400"
+                      }`}>
+                        <p className={`text-xs font-bold mb-1 ${
+                          mission.pickup_otp_verified
+                            ? "text-green-700 dark:text-green-400"
+                            : "text-yellow-700 dark:text-yellow-400"
+                        }`}>
+                          {mission.pickup_otp_verified ? "✅ Code validé" : "🔐 Code à présenter à la pharmacie"}
                         </p>
-                        <p className="text-2xl font-black tracking-widest text-green-600 dark:text-green-400">
-                          {activeMission.pickup_otp}
+                        <p className={`text-3xl font-black tracking-widest ${
+                          mission.pickup_otp_verified
+                            ? "text-green-700 dark:text-green-400"
+                            : "text-yellow-700 dark:text-yellow-400"
+                        }`}>
+                          {mission.pickup_otp}
                         </p>
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="text-xs font-bold text-yellow-700 dark:text-yellow-400 mb-2">
-                          🔐 Présentez ce code à la pharmacie
-                        </p>
-                        <p className="text-4xl font-black tracking-widest text-yellow-700 dark:text-yellow-400 mb-2">
-                          {activeMission.pickup_otp}
-                        </p>
-                        <p className="text-xs text-yellow-600 dark:text-yellow-400">
-                          La pharmacie vérifiera ce code avant de vous remettre le colis.
-                        </p>
-                        {activeMission.status === "driver_arrived_at_pharmacy" && (
-                          <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1 font-semibold animate-pulse">
-                            ⏳ En attente de validation par la pharmacie...
+                        {!mission.pickup_otp_verified && (
+                          <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                            Présentez ce code à la pharmacie avant de récupérer le colis.
                           </p>
                         )}
                       </div>
                     )}
-                  </div>
-                )}
 
-                {/* Pharmacie */}
-                <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                  <p className="font-bold text-sm text-[#00572D] dark:text-green-400 mb-1">
-                    🏥 {activeMission.pharmacies?.name}
-                  </p>
-                  <p className="text-xs text-gray-400">📍 {activeMission.pharmacies?.city}</p>
-                  {activeMission.pharmacies?.phone && (
-                    <a
-                      href={`tel:${activeMission.pharmacies.phone}`}
-                      className="inline-flex items-center gap-1 mt-2 text-xs text-[#00572D] dark:text-green-400 font-semibold"
-                    >
-                      📞 {activeMission.pharmacies.phone}
-                    </a>
-                  )}
-                </div>
-
-                {/* Produits */}
-                <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                  <p className="font-bold text-sm mb-2 dark:text-white">💊 Produits à livrer</p>
-                  {activeMissionItems.length === 0 && (
-                    <p className="text-xs text-gray-400">Chargement...</p>
-                  )}
-                  {activeMissionItems.map((item) => (
-                    <div key={item.id} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
-                      <p className="text-xs dark:text-gray-300">{item.medicine_name} × {item.quantity}</p>
-                      <p className="text-xs font-bold text-[#00572D] dark:text-green-400">
-                        {(item.subtotal || 0).toLocaleString()} FCFA
+                    {/* Pharmacie */}
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                      <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">🏥 Pharmacie</p>
+                      <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
+                        {mission.pharmacies?.name}
                       </p>
+                      {mission.pharmacies?.address && (
+                        <p className="text-xs text-gray-400 mt-0.5">📍 {mission.pharmacies.address}</p>
+                      )}
+                      {mission.pharmacies?.phone && (
+                        <a href={`tel:${mission.pharmacies.phone}`} className="text-xs text-[#00572D] dark:text-green-400 font-semibold mt-0.5 block">
+                          📞 {mission.pharmacies.phone}
+                        </a>
+                      )}
+                      {mission.pharmacies?.latitude && mission.pharmacies?.longitude && (
+                        <button
+                          onClick={() => openGoogleMaps(mission.pharmacies.latitude, mission.pharmacies.longitude, mission.pharmacies.name)}
+                          className="mt-2 w-full bg-[#00572D] text-white py-2 rounded-xl text-xs font-bold"
+                        >
+                          🗺️ Ouvrir dans Google Maps
+                        </button>
+                      )}
                     </div>
-                  ))}
-                </div>
 
-                {/* Adresse livraison */}
-                {activeMissionAddress && (
-                  <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                    <p className="font-bold text-sm mb-2 dark:text-white">🏠 Livrer à</p>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                      {activeMissionAddress.full_name}
-                    </p>
-                    <a
-                      href={`tel:${activeMissionAddress.phone}`}
-                      className="text-xs text-[#00572D] dark:text-green-400 font-semibold"
-                    >
-                      📞 {activeMissionAddress.phone}
-                    </a>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {activeMissionAddress.address_line}
-                      {activeMissionAddress.district && `, ${activeMissionAddress.district}`}
-                    </p>
-                    <p className="text-xs text-gray-400">{activeMissionAddress.city}</p>
-                    {activeMissionAddress.notes && (
-                      <p className="text-xs text-gray-400 mt-1 italic">📝 {activeMissionAddress.notes}</p>
+                    {/* Client / Adresse */}
+                    {mission.addresses && (
+                      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                        <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">🏠 Livrer à</p>
+                        <p className="font-semibold text-sm dark:text-white">{mission.addresses.full_name}</p>
+                        <a href={`tel:${mission.addresses.phone}`} className="text-xs text-[#00572D] dark:text-green-400 font-semibold">
+                          📞 {mission.addresses.phone}
+                        </a>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {mission.addresses.address_line}
+                          {mission.addresses.district && `, ${mission.addresses.district}`}
+                        </p>
+                        <p className="text-xs text-gray-400">{mission.addresses.city}</p>
+                        {mission.addresses.notes && (
+                          <p className="text-xs text-gray-400 mt-0.5 italic">📝 {mission.addresses.notes}</p>
+                        )}
+                        {mission.addresses.latitude && mission.addresses.longitude && (
+                          <button
+                            onClick={() => openGoogleMaps(mission.addresses.latitude, mission.addresses.longitude, mission.addresses.full_name)}
+                            className="mt-2 w-full border-2 border-[#00572D] text-[#00572D] dark:text-green-400 py-2 rounded-xl text-xs font-bold"
+                          >
+                            🧭 Naviguer vers le client
+                          </button>
+                        )}
+                      </div>
                     )}
-                  </div>
-                )}
 
-                {/* Gain */}
-                <div className="bg-[#00572D] rounded-xl p-4 text-white">
-                  <div className="flex justify-between items-center">
-                    <span className="text-green-200 text-sm">Votre gain estimé</span>
-                    <span className="font-bold text-lg">
-                      {(activeMission.driver_earning || 0).toLocaleString()} FCFA
-                    </span>
+                    {/* Gain */}
+                    <div className="bg-[#00572D] rounded-xl p-3 text-white flex justify-between items-center">
+                      <span className="text-green-200 text-xs">Votre gain estimé</span>
+                      <span className="font-bold text-base">
+                        {(mission.driver_earning || 0).toLocaleString()} FCFA
+                      </span>
+                    </div>
+
+                    {/* Message attente client */}
+                    {mission.status === "driver_arrived" && (
+                      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 text-center">
+                        <p className="text-sm font-bold text-blue-700 dark:text-blue-400">
+                          📍 Vous êtes arrivé chez le client
+                        </p>
+                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                          En attente de la confirmation du client.
+                        </p>
+                        <p className="text-xs text-blue-500 dark:text-blue-400 mt-1 font-semibold animate-pulse">
+                          ⏳ Le client doit cliquer sur "Confirmer la livraison"
+                        </p>
+                      </div>
+                    )}
+
+                    {/* ✅ Actions — chargement local à cette mission */}
+                    {actions.map((action) => (
+                      <button
+                        key={action.status}
+                        onClick={() => updateMissionStatus(mission.id, action.status)}
+                        disabled={isThisUpdating}
+                        className={`w-full ${action.color} text-white p-3 rounded-xl font-bold text-sm disabled:opacity-50 transition`}
+                      >
+                        {isThisUpdating ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Mise à jour...
+                          </span>
+                        ) : `${action.emoji} ${action.label}`}
+                      </button>
+                    ))}
+
+                    {/* Bouton voir détails */}
+                    <button
+                      onClick={() => openMissionDetail(mission)}
+                      className="w-full border-2 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 py-2 rounded-xl text-xs font-bold"
+                    >
+                      📋 Voir tous les détails
+                    </button>
                   </div>
-                  <p className="text-xs text-green-200 mt-1">
-                    Versé après confirmation du client
-                  </p>
                 </div>
-
-                {/* Message "En attente du client" si driver_arrived */}
-                {activeMission.status === "driver_arrived" && (
-                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-4 text-center">
-                    <p className="text-sm font-bold text-blue-700 dark:text-blue-400">
-                      📍 Vous êtes arrivé chez le client
-                    </p>
-                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                      En attente de la confirmation de réception par le client.
-                    </p>
-                    <p className="text-xs text-blue-500 dark:text-blue-400 mt-1 font-semibold animate-pulse">
-                      ⏳ Le client doit cliquer sur "Confirmer la livraison"
-                    </p>
-                  </div>
-                )}
-
-                {/* Boutons d'action */}
-                {getMissionActions().map((action) => (
-                  <button
-                    key={action.status}
-                    onClick={() => updateMissionStatus(action.status)}
-                    disabled={updating}
-                    className={`w-full ${action.color} text-white p-3.5 rounded-xl font-bold text-sm disabled:opacity-50 transition hover:opacity-90`}
-                  >
-                    {updating ? "Mise à jour..." : `${action.emoji} ${action.label}`}
-                  </button>
-                ))}
-              </div>
-            )}
+              );
+            })}
           </div>
         )}
 
@@ -839,9 +858,7 @@ export default function DriverDashboard() {
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-10 text-center shadow-sm">
                 <div className="text-5xl mb-3">📊</div>
                 <p className="text-gray-500 dark:text-gray-400 font-medium">Aucune livraison effectuée</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Vos livraisons terminées apparaîtront ici automatiquement.
-                </p>
+                <p className="text-xs text-gray-400 mt-1">Vos livraisons terminées apparaîtront ici automatiquement.</p>
               </div>
             )}
 
@@ -853,11 +870,7 @@ export default function DriverDashboard() {
                     <p className="text-xs text-gray-400 mt-0.5">
                       {order.delivered_at
                         ? new Date(order.delivered_at).toLocaleDateString("fr-FR", {
-                            day: "numeric",
-                            month: "short",
-                            year: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
+                            day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
                           })
                         : "—"}
                     </p>
@@ -925,8 +938,140 @@ export default function DriverDashboard() {
             </button>
           </div>
         )}
-
       </div>
+
+      {/* ========== MODAL DÉTAIL MISSION ========== */}
+      {selectedMission && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white dark:bg-gray-900 dark:text-white w-full sm:w-[92%] sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[90vh] flex flex-col">
+
+            <div className="flex items-center justify-between px-5 py-4 border-b dark:border-gray-700">
+              <h2 className="text-lg font-bold">📋 Détail de la mission</h2>
+              <button
+                onClick={closeMissionDetail}
+                className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+              {/* Infos commande */}
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-2">📦 Commande</p>
+                <p className="text-xs text-gray-400">N° {selectedMission.id.substring(0, 8).toUpperCase()}</p>
+                {selectedMission.pickup_otp && (
+                  <div className="mt-2 text-center">
+                    <p className="text-xs font-bold text-yellow-700 dark:text-yellow-400">🔐 Code de récupération</p>
+                    <p className="text-2xl font-black tracking-widest text-yellow-700 dark:text-yellow-400">
+                      {selectedMission.pickup_otp}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Pharmacie */}
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-2">🏥 Pharmacie</p>
+                <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
+                  {selectedMission.pharmacies?.name}
+                </p>
+                {selectedMission.pharmacies?.address && (
+                  <p className="text-xs text-gray-400">📍 {selectedMission.pharmacies.address}, {selectedMission.pharmacies?.city}</p>
+                )}
+                {selectedMission.pharmacies?.phone && (
+                  <a href={`tel:${selectedMission.pharmacies.phone}`} className="text-xs text-[#00572D] dark:text-green-400 font-semibold block mt-1">
+                    📞 {selectedMission.pharmacies.phone}
+                  </a>
+                )}
+                {selectedMission.pharmacies?.latitude && selectedMission.pharmacies?.longitude && (
+                  <button
+                    onClick={() => openGoogleMaps(selectedMission.pharmacies.latitude, selectedMission.pharmacies.longitude, selectedMission.pharmacies.name)}
+                    className="mt-2 w-full bg-[#00572D] text-white py-2 rounded-xl text-xs font-bold"
+                  >
+                    🗺️ Ouvrir dans Google Maps
+                  </button>
+                )}
+              </div>
+
+              {/* Client */}
+              {selectedMissionAddress && (
+                <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-2">🏠 Client</p>
+                  <p className="font-bold text-sm dark:text-white">{selectedMissionAddress.full_name}</p>
+                  <a href={`tel:${selectedMissionAddress.phone}`} className="text-xs text-[#00572D] dark:text-green-400 font-semibold">
+                    📞 {selectedMissionAddress.phone}
+                  </a>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {selectedMissionAddress.address_line}
+                    {selectedMissionAddress.district && `, ${selectedMissionAddress.district}`}
+                  </p>
+                  <p className="text-xs text-gray-400">{selectedMissionAddress.city}</p>
+                  {selectedMissionAddress.notes && (
+                    <p className="text-xs text-gray-400 mt-1 italic">📝 {selectedMissionAddress.notes}</p>
+                  )}
+                  {selectedMissionAddress.latitude && selectedMissionAddress.longitude && (
+                    <button
+                      onClick={() => openGoogleMaps(selectedMissionAddress.latitude, selectedMissionAddress.longitude, selectedMissionAddress.full_name)}
+                      className="mt-2 w-full border-2 border-[#00572D] text-[#00572D] dark:text-green-400 py-2 rounded-xl text-xs font-bold"
+                    >
+                      🧭 Naviguer vers le client
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Médicaments */}
+              {selectedMissionItems.length > 0 && (
+                <div>
+                  <p className="font-bold text-sm mb-2 dark:text-white">
+                    💊 {selectedMissionItems.length} médicament{selectedMissionItems.length > 1 ? "s" : ""}
+                  </p>
+                  <div className="space-y-2">
+                    {selectedMissionItems.map((item) => (
+                      <div key={item.id} className="flex justify-between items-center bg-gray-50 dark:bg-gray-800 p-3 rounded-xl">
+                        <div>
+                          <p className="text-sm font-medium dark:text-white">{item.medicine_name}</p>
+                          <p className="text-xs text-gray-400">Quantité : {item.quantity}</p>
+                        </div>
+                        <p className="font-bold text-sm text-[#00572D] dark:text-green-400">
+                          {(item.subtotal || 0).toLocaleString()} FCFA
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Montants */}
+              <div className="bg-[#00572D] rounded-xl p-4 text-white space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-green-200">Médicaments</span>
+                  <span className="font-bold">{(selectedMission.subtotal || 0).toLocaleString()} FCFA</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-green-200">Frais livraison</span>
+                  <span className="font-bold">{(selectedMission.delivery_fee || 0).toLocaleString()} FCFA</span>
+                </div>
+                <div className="flex justify-between text-lg font-bold pt-2 border-t border-green-600">
+                  <span>Votre gain</span>
+                  <span>{(selectedMission.driver_earning || 0).toLocaleString()} FCFA</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t dark:border-gray-700">
+              <button
+                onClick={closeMissionDetail}
+                className="w-full bg-gray-200 dark:bg-gray-700 dark:text-white p-3 rounded-xl font-bold text-sm"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
